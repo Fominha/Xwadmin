@@ -1,10 +1,11 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { Button } from "../ui/button";
 import { Label } from "../ui/label";
 import { Textarea } from "../ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
+import { fetchSheetData } from "../../lib/mockApi";
 
 interface Creator {
   id: number;
@@ -26,12 +27,45 @@ interface Creator {
 
 export function Qualify() {
   const [expandedId, setExpandedId] = useState<number | null>(null);
-  const [creators, setCreators] = useState<Creator[]>([
-    { id: 1, name: "Sarah Johnson", handle: "@sarahjstyle", stage: "Ready to Score", followers: "245K", offer: "$450" },
-    { id: 2, name: "Marcus Chen", handle: "@marcusfashion", stage: "Ready to Score", followers: "189K", offer: "$380", scores: { productionTier: 4, category1: "Fashion", category2: "Lifestyle", category3: "Beauty", contentMatch: 5, audienceFit: 4, notes: "Strong fit" } },
-    { id: 3, name: "Emma Davis", handle: "@emmastyle", stage: "Ready to Score", followers: "312K", offer: "$520" },
-    { id: 4, name: "Alex Rodriguez", handle: "@alexfits", stage: "Ready to Score", followers: "156K", offer: "$340", scores: { productionTier: 3, category1: "Fashion", category2: "Fitness", category3: "Travel", contentMatch: 4, audienceFit: 3, notes: "Good reach" } },
-  ]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [creators, setCreators] = useState<Creator[]>([]);
+
+  useEffect(() => {
+    loadCreators();
+  }, []);
+
+  const loadCreators = async () => {
+    const sheetId = localStorage.getItem("xw_sheet_id") || "mock";
+
+    try {
+      const data = await fetchSheetData(sheetId, "Score_Creators");
+      const mapped = (data.rows || []).map((row: any, idx: number) => ({
+          id: idx + 1,
+          name: row.creatorName || "Unknown",
+          handle: row.handle || "@unknown",
+          stage: "Ready to Score",
+          followers: row.followers || "0",
+          offer: row.offer || "$0",
+          scores: row.productionTier ? {
+            productionTier: parseInt(row.productionTier) || 1,
+            category1: row.category1 || "",
+            category2: row.category2 || "",
+            category3: row.category3 || "",
+            contentMatch: parseInt(row.contentMatch) || 1,
+            audienceFit: parseInt(row.audienceFit) || 1,
+            notes: row.notes || "",
+          } : undefined,
+        }));
+      setCreators(mapped);
+      setError(false);
+    } catch (err) {
+      console.error("Failed to load creators:", err);
+      setError(true);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const toggleExpand = (id: number) => {
     setExpandedId(expandedId === id ? null : id);
@@ -41,6 +75,39 @@ export function Qualify() {
     alert(`Creator ${id} saved and sent to client`);
     setExpandedId(null);
   };
+
+  if (loading) {
+    return (
+      <div className="p-8 max-w-7xl mx-auto flex items-center justify-center min-h-[400px]">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-8 h-8 border-4 border-[#038B97] border-t-transparent rounded-full animate-spin"></div>
+          <div className="text-sm text-muted-foreground">Loading creators...</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="p-8 max-w-7xl mx-auto flex items-center justify-center min-h-[400px]">
+        <div className="bg-white rounded-lg border border-border p-8 text-center max-w-md">
+          <div className="text-muted-foreground mb-4">
+            Could not load data — check your sheet connection
+          </div>
+          <Button
+            onClick={() => {
+              setError(false);
+              setLoading(true);
+              loadCreators();
+            }}
+            variant="outline"
+          >
+            Retry
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-8 max-w-7xl mx-auto space-y-6">

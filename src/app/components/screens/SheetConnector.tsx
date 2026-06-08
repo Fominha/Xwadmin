@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { DisconnectSheetModal } from "../modals/DisconnectSheetModal";
+import { getCurrentUser } from "../../lib/auth";
 
 export function SheetConnector() {
   const [sheetUrl, setSheetUrl] = useState("");
@@ -11,7 +12,16 @@ export function SheetConnector() {
   const [disconnectModalOpen, setDisconnectModalOpen] = useState(false);
   const navigate = useNavigate();
 
+  useEffect(() => {
+    const user = getCurrentUser();
+    if (!user) {
+      navigate("/login");
+    }
+  }, [navigate]);
+
   const handleConnect = () => {
+    const extractedId = sheetUrl.match(/\/d\/([a-zA-Z0-9-_]+)/)?.[1] || "mock-sheet-id";
+    localStorage.setItem("xw_sheet_id", extractedId);
     setSheetName("Campaign Q2 2026");
     setConnected(true);
     setTimeout(() => navigate("/dashboard"), 1000);

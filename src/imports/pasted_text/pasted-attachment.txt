@@ -1,0 +1,119 @@
+Make the following specific changes to the XW Admin app. Do not change any colors, typography, or overall layout. Only make the changes listed below, exactly as described.
+
+GLOBAL CHANGES — apply to every screen
+
+Remove all personal names from the UI. Replace as follows everywhere they appear:
+
+"Marlen" → "Ops"
+"Julio" → "Lead"
+"Ready for Julio" → "Pending Approval"
+"Marlen's notes" or "Ops notes" → "Why XW recommends"
+"Review and approve creators from Marlen" → "Review and approve creators from Ops"
+Any other hardcoded personal name → remove or replace with role label
+
+
+The role selector on the connect/login screen should show "Ops" and "Lead" as the two role options, not personal names. Label the selector "Select your role."
+The sidebar role pill (currently shows "Marlen" or "Julio") should show "Ops" or "Lead" depending on active role.
+
+
+OPS VIEW CHANGES
+4. Dashboard — "Act now" Review button:
+When the user clicks the "Review" button inside the red "Act now" card, navigate to the Creators screen with the filter pre-set to show only urgent items (New bid + Silent 48h+ statuses). Do not open a modal — just navigate to /creators with those filters active.
+5. Creators screen — urgency sorting:
+Automatically sort the creators table by urgency. Order from top to bottom:
+
+First: Silent 48h+ (red pill) — these are most urgent
+Second: New bid (amber pill) — score these to unlock negotiation
+Third: Negotiating (teal pill)
+Fourth: Counter sent (gray pill)
+Last: Final bid set (green pill)
+Do not require manual sorting. This order is always automatic.
+
+6. Creators screen — side panel on row click:
+When a user clicks anywhere on a creator row (not just the action button), open a side panel on the right side of the screen (not a new page, not a modal). The side panel should be 420px wide, slide in from the right, and show three tabs: Profile · Score · Negotiate. The main table behind it remains visible but dimmed. A close button (×) in the top right of the panel closes it. This panel is the core of Marlen's workflow so it must work correctly.
+Profile tab content: Creator name, Instagram handle (as clickable link to their Instagram), followers, size (nano/micro/mid-tier), categories, country, gender, email, phone. All read-only.
+Score tab content: Three scoring sections. Each has a segmented button row (1–5) and a label below that updates live as the user clicks a number.
+
+Production Tier: 1=Raw — shaky cam, no structure · 2=Emerging — improving, uneven · 3=Practiced — reliable, brand-safe · 4=Fluent — polished, ad-ready · 5=Studio — broadcast quality
+Content Match: 1=Off brief entirely · 2=Loosely related · 3=On topic, average fit · 4=Strong fit · 5=Perfect match
+Audience Fit: 1=Wrong demographic · 2=Partial overlap · 3=Decent match · 4=Strong alignment · 5=Ideal audience
+Below the scores: XW Category 1 dropdown · XW Category 2 dropdown · Notes textarea · "Why XW recommends" textarea (one sentence, shown to Lead in approval view).
+Button: "Save scores" (gray). When all three scores are set AND "Why XW recommends" is filled: show "Save & move to negotiation →" (teal) instead.
+
+Negotiate tab content: Their ask (read-only) · Recommended range (teal, calculated from NEG_TIERS) · Counter offer input field · Status dropdown (Pending Review / Negotiating / Counter sent / Ready to Score) · Notes textarea · "Lock final bid →" button (amber) · When final bid is locked: show "Send to Lead for approval →" button (teal). Below all of this: a simple action timeline showing timestamped events e.g. "Bid received Apr 21 · Counter sent Apr 22."
+NEG_TIERS calculation (run client-side):
+
+Ask ≤ $500: recommend 60–80% of ask
+Ask ≤ $800: recommend 50–60%
+Ask ≤ $1,500: recommend 40–60%
+Ask ≤ $3,000: recommend 40–50%
+Ask ≤ $7,000: recommend 30–50%
+Ask > $7,000: recommend 25–40%
+> Round to nearest 50.Showas"50. Show as "
+50.Showas"X–$Y" in teal.
+
+
+7. Brief screen (Ops view) — add honest save note:
+Below the "Save brief →" button, add a small gray note: "Saved locally for now — sheet sync coming soon." This makes it clear the save is temporary until backend is connected.
+
+LEAD VIEW CHANGES
+8. Lead Dashboard — replace with GMV realization view:
+Remove the current "Pending your approval" list from the dashboard. Replace with:
+Top card (campaign health — same as before): campaign name, client, posting window, budget bar, days until supply chain closes.
+Second section — "Campaign realization" — a large clear metrics block:
+
+MSA Budget: $10,000 (full amount)
+Realized: $X (confirmed ordered) — shown as a bold number and percentage e.g. "94%"
+Pending your approval: $X — shown in amber with message "Approving all would bring realization to X%"
+Remaining budget: $X
+A single teal progress bar showing realized vs total, with an amber extension showing pending
+Days until supply window closes — red pill if under 7 days, amber if under 14
+
+Third section — "Needs your decision" — compact strip, not a full table:
+
+A count of creators pending approval with a single teal "Review approvals →" button that navigates to /approvals
+A count of overdue orders with a red "View overdue →" button that navigates to /orders
+
+9. Approvals screen — replace table with cards:
+Remove the current table layout. Replace with a card-per-creator layout. Each card contains:
+
+Left side: Creator name (bold) · Instagram handle (as clickable teal link) · Size pill (nano/micro/mid-tier)
+Center: Tier label (e.g. "Tier 4 — Fluent") · Final price (large, bold) · "Why XW recommends" (one sentence, italic, gray)
+Right side: Budget impact line — "Adding this creator: +$X → X% MSA realized" in small teal text · Two buttons stacked: "Pass back" (ghost button) · "Approve & push to client →" (teal, full width)
+
+At the top of the page: a summary bar showing total pending value and what % realization approving all would achieve. A "Approve all →" batch button on the right.
+Cards are sorted by recommendation strength — highest content match + audience fit scores first.
+10. Orders screen — add MSA realization bar and fix urgency:
+At the top of the Orders page, above the table, add a realization summary bar:
+
+MSA Realized: $X / $Y — Z% (teal number)
+Four inline stats: Paid $X · Invoiced $X · Unpaid $X · Overdue $X (overdue in red)
+A note in small gray text: "Payments processed via Stripe — update status manually after confirmation"
+
+In the table: any row where Invoice Due Date is in the past AND Payment Status is not Paid should automatically show a red background highlight and the Payment Status pill should show "Overdue" in red.
+Add two action buttons per row (small, ghost style, after the existing columns):
+
+"Mark invoice sent" — only shows if Payment Status is Unpaid
+"Mark paid" — shows if Payment Status is Invoiced or Overdue
+Clicking these updates the row status in the table (UI only for now — backend sync later).
+
+Add a "Sync from sheet" button top right (already exists — keep it).
+11. Brief screen (Lead view) — read-only summary card:
+Replace the editable form with a read-only summary card. Show these fields as key-value pairs (label on left, value on right, separated by a light border):
+
+Campaign name
+Client
+MSA Budget
+Platform
+Content format
+Posting window (start – end)
+Financial trigger type + date
+Hook
+CTA
+Compliance notes
+
+No input fields. No save button. No "Import from Doc" section.
+At the bottom of the card, a small gray note: "Brief is managed in Ops view."
+The page title should be "Campaign Brief" with subtitle "Read-only summary."
+
+THAT IS ALL. Do not change anything else. Do not redesign any screens not listed above. Do not change colors, fonts, spacing, or the sidebar. Only make the 11 changes listed.

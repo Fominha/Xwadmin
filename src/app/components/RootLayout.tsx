@@ -1,23 +1,99 @@
-import { Outlet, NavLink, useLocation } from "react-router";
-import { Menu, X, Home, FileText, Upload, Layers, Handshake, CheckCircle, ShoppingCart } from "lucide-react";
-import { useState } from "react";
-
-const navItems = [
-  { path: "/dashboard", label: "Dashboard", icon: Home, count: 0 },
-  { path: "/", label: "Brief", icon: FileText, count: 0 },
-  { path: "/import", label: "Import", icon: Upload, count: 0 },
-  { path: "/pipeline", label: "Pipeline", icon: Layers, count: 47 },
-  { path: "/negotiate", label: "Negotiate", icon: Handshake, count: 12 },
-  { path: "/qualify", label: "Qualify", icon: CheckCircle, count: 8 },
-  { path: "/push-to-client", label: "Push to Client", icon: Upload, count: 5 },
-  { path: "/orders", label: "Orders", icon: ShoppingCart, count: 15 },
-];
+import { Outlet, NavLink, useLocation, useNavigate } from "react-router";
+import { Menu, X, Home, FileText, Upload, Users, CheckCircle, ShoppingCart, Link2, Settings, Layers } from "lucide-react";
+import { useState, useEffect } from "react";
+import { DisconnectSheetModal } from "./modals/DisconnectSheetModal";
+import { getCurrentUser, logout } from "../lib/auth";
+import { supabase } from "../lib/supabase";
 
 export function RootLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(
     typeof window !== "undefined" && window.innerWidth >= 1024
   );
   const location = useLocation();
+  const navigate = useNavigate();
+  const [hasSheet, setHasSheet] = useState(false);
+  const [disconnectModalOpen, setDisconnectModalOpen] = useState(false);
+  const [user, setUser] = useState(getCurrentUser());
+  const [approvalsBadgeCount, setApprovalsBadgeCount] = useState(2);
+  const [ordersBadgeCount, setOrdersBadgeCount] = useState(0);
+
+  useEffect(() => {
+    const currentUser = getCurrentUser();
+    if (!currentUser) {
+      navigate("/login");
+      return;
+    }
+    setUser(currentUser);
+
+    const sheetId = localStorage.getItem("xw_sheet_id");
+    setHasSheet(!!sheetId);
+
+    if (!sheetId && location.pathname !== "/connect") {
+      navigate("/connect");
+    }
+
+    // Initialize badge count from localStorage
+    const storedCount = localStorage.getItem("xw_approvals_count");
+    if (storedCount) {
+      setApprovalsBadgeCount(parseInt(storedCount, 10));
+    }
+
+    // Fetch pending orders badge
+    const campaignId = localStorage.getItem("xw_campaign_id");
+    if (campaignId) {
+      supabase
+        .from("client_selections")
+        .select("*", { count: "exact", head: true })
+        .eq("campaign_id", campaignId)
+        .eq("decision", "Pending")
+        .then(({ count }) => setOrdersBadgeCount(count ?? 0));
+    }
+  }, [location.pathname, navigate]);
+
+  useEffect(() => {
+    const handleStorageChange = () => {
+      const storedCount = localStorage.getItem("xw_approvals_count");
+      if (storedCount) {
+        setApprovalsBadgeCount(parseInt(storedCount, 10));
+      }
+    };
+
+    window.addEventListener("storage", handleStorageChange);
+    return () => window.removeEventListener("storage", handleStorageChange);
+  }, []);
+
+  const handleDisconnect = () => {
+    localStorage.removeItem("xw_sheet_id");
+    setHasSheet(false);
+    navigate("/connect");
+  };
+
+  const handleSwitchRole = () => {
+    logout();
+    navigate("/login");
+  };
+
+  const opsNavItems = [
+    { path: "/", label: "Campaigns", icon: Layers, count: 0 },
+    { path: "/dashboard", label: "Dashboard", icon: Home, count: 0 },
+    { path: "/brief", label: "Brief", icon: FileText, count: 0 },
+    { path: "/import", label: "Import", icon: Upload, count: 0 },
+    { path: "/pipeline", label: "Pipeline", icon: Users, count: 0 },
+    { path: "/activations", label: "Activations", icon: ShoppingCart, count: 0 },
+    { path: "/settings", label: "Settings", icon: Settings, count: 0 },
+  ];
+
+  const leadNavItems = [
+    { path: "/dashboard", label: "Dashboard", icon: Home, count: 0 },
+    { path: "/approvals", label: "Approvals", icon: CheckCircle, count: approvalsBadgeCount },
+    { path: "/orders", label: "Orders", icon: ShoppingCart, count: ordersBadgeCount },
+    { path: "/brief", label: "Brief", icon: FileText, count: 0 },
+    { path: "/settings", label: "Settings", icon: Settings, count: 0 },
+  ];
+
+  const navItems = user?.role === "ops" ? opsNavItems : leadNavItems;
+
+  if (!user) return null;
 
   return (
     <div className="flex h-screen bg-background">
@@ -30,11 +106,11 @@ export function RootLayout() {
 
       <aside
         className={`${
-          sidebarOpen ? "w-64" : "w-0 lg:w-0"
+          sidebarOpen ? "w-64" : "w-0 lg:w-64"
         } bg-white border-r border-border transition-all duration-300 overflow-hidden flex flex-col fixed lg:relative h-full z-50 lg:z-auto`}
       >
         <div className="p-6 border-b border-border">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between mb-4">
             <h1 className="text-xl tracking-tight" style={{ color: "#038B97" }}>
               XW Admin
             </h1>
@@ -45,11 +121,24 @@ export function RootLayout() {
               <X className="w-5 h-5" />
             </button>
           </div>
+          <div className="flex items-center justify-between">
+            <div className="px-2 py-1 rounded-full bg-muted text-xs text-muted-foreground">
+              {user.name}
+            </div>
+            <button
+              onClick={handleSwitchRole}
+              className="text-xs text-[#038B97] hover:underline"
+            >
+              Switch role
+            </button>
+          </div>
         </div>
 
         <nav className="flex-1 p-4 space-y-1">
           {navItems.map((item) => {
-            const isActive = location.pathname === item.path;
+            const isActive = item.path === "/"
+              ? location.pathname === "/" || location.pathname === "/campaigns"
+              : location.pathname === item.path;
             const Icon = item.icon;
             return (
               <NavLink
@@ -66,7 +155,7 @@ export function RootLayout() {
                   <span>{item.label}</span>
                 </div>
                 {item.count > 0 && (
-                  <span className="px-2 py-0.5 text-xs rounded-full bg-muted text-muted-foreground">
+                  <span className="px-2 py-0.5 text-xs rounded-full bg-[#038B97] text-white">
                     {item.count}
                   </span>
                 )}
@@ -85,8 +174,28 @@ export function RootLayout() {
             <Menu className="w-5 h-5" />
           </button>
         </div>
+        {hasSheet && location.pathname !== "/connect" && (
+          <div className="bg-white border-b border-border px-6 py-2 flex items-center justify-between">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Link2 className="w-4 h-4 text-[#038B97]" />
+              <span>Connected to campaign sheet</span>
+            </div>
+            <button
+              onClick={() => setDisconnectModalOpen(true)}
+              className="text-sm text-muted-foreground hover:text-destructive"
+            >
+              Disconnect
+            </button>
+          </div>
+        )}
         <Outlet />
       </main>
+
+      <DisconnectSheetModal
+        open={disconnectModalOpen}
+        onClose={() => setDisconnectModalOpen(false)}
+        onConfirm={handleDisconnect}
+      />
     </div>
   );
 }

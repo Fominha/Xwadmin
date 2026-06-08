@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
 import { PushToClientModal } from "../modals/PushToClientModal";
+import { fetchSheetData } from "../../lib/mockApi";
 
 interface QualifiedCreator {
   id: number;
@@ -15,18 +16,44 @@ interface QualifiedCreator {
   audienceFit: number;
 }
 
-const qualifiedCreators: QualifiedCreator[] = [
-  { id: 1, name: "Sarah Johnson", handle: "@sarahjstyle", tier: 4, executionPrice: 450, usageRights: "1 year", contentMatch: 5, audienceFit: 4 },
-  { id: 2, name: "Marcus Chen", handle: "@marcusfashion", tier: 3, executionPrice: 380, usageRights: "6 months", contentMatch: 4, audienceFit: 4 },
-  { id: 3, name: "Emma Davis", handle: "@emmastyle", tier: 5, executionPrice: 520, usageRights: "1 year", contentMatch: 5, audienceFit: 5 },
-  { id: 4, name: "Jessica Park", handle: "@jessicap", tier: 4, executionPrice: 490, usageRights: "1 year", contentMatch: 5, audienceFit: 4 },
-  { id: 5, name: "Tyler Brooks", handle: "@tylerb", tier: 3, executionPrice: 340, usageRights: "6 months", contentMatch: 3, audienceFit: 3 },
-];
-
 export function PushToClient() {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [qualifiedCreators, setQualifiedCreators] = useState<QualifiedCreator[]>([]);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [modalOpen, setModalOpen] = useState(false);
   const [selectedCreator, setSelectedCreator] = useState<QualifiedCreator | null>(null);
+
+  useEffect(() => {
+    loadQualifiedCreators();
+  }, []);
+
+  const loadQualifiedCreators = async () => {
+    const sheetId = localStorage.getItem("xw_sheet_id") || "mock";
+
+    try {
+      const data = await fetchSheetData(sheetId, "Score_Creators");
+      const mapped = (data.rows || [])
+          .filter((row: any) => row.reviewStatus === "Sent to Client")
+          .map((row: any, idx: number) => ({
+            id: idx + 1,
+            name: row.creatorName || "Unknown",
+            handle: row.handle || "@unknown",
+            tier: parseInt(row.productionTier) || 1,
+            executionPrice: parseFloat(row.executionPrice) || 0,
+            usageRights: row.usageRights || "6 months",
+            contentMatch: parseInt(row.contentMatch) || 1,
+            audienceFit: parseInt(row.audienceFit) || 1,
+          }));
+      setQualifiedCreators(mapped);
+      setError(false);
+    } catch (err) {
+      console.error("Failed to load qualified creators:", err);
+      setError(true);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const toggleSelection = (id: number) => {
     setSelectedIds((prev) =>
@@ -50,6 +77,39 @@ export function PushToClient() {
   const handleBatchPush = () => {
     alert(`Pushing ${selectedIds.length} creators to client...`);
   };
+
+  if (loading) {
+    return (
+      <div className="p-8 max-w-7xl mx-auto flex items-center justify-center min-h-[400px]">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-8 h-8 border-4 border-[#038B97] border-t-transparent rounded-full animate-spin"></div>
+          <div className="text-sm text-muted-foreground">Loading qualified creators...</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="p-8 max-w-7xl mx-auto flex items-center justify-center min-h-[400px]">
+        <div className="bg-white rounded-lg border border-border p-8 text-center max-w-md">
+          <div className="text-muted-foreground mb-4">
+            Could not load data — check your sheet connection
+          </div>
+          <Button
+            onClick={() => {
+              setError(false);
+              setLoading(true);
+              loadQualifiedCreators();
+            }}
+            variant="outline"
+          >
+            Retry
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-8 max-w-7xl mx-auto space-y-6">
