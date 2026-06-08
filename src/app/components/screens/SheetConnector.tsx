@@ -24,7 +24,7 @@ export function SheetConnector() {
     localStorage.setItem("xw_sheet_id", extractedId);
     setSheetName("Campaign Q2 2026");
     setConnected(true);
-    setTimeout(() => navigate("/dashboard"), 1000);
+    setTimeout(() => navigate("/"), 1000);
   };
 
   const handleDisconnect = () => {

@@ -5,6 +5,7 @@ import { Button } from "../ui/button";
 import { fetchSheetData } from "../../lib/mockApi";
 import { getCurrentUser } from "../../lib/auth";
 import { AlertCircle, Clock, CheckCircle2 } from "lucide-react";
+import { supabase } from "../../lib/supabase";
 
 interface DashboardData {
   campaignName: string;
@@ -27,33 +28,34 @@ export function Dashboard() {
   }, []);
 
   const loadDashboardData = async () => {
-    const sheetId = localStorage.getItem("xw_sheet_id") || "mock";
-
     try {
-      const [briefData, pipelineData] = await Promise.all([
-        fetchSheetData(sheetId, "Campaign_Brief"),
-        fetchSheetData(sheetId, "Supply_Pipeline"),
-      ]);
-
-      const brief = briefData.rows?.[0] || {};
-      const pipeline = pipelineData.rows || [];
-
-      const committed = pipeline
-        .filter((r: any) => r.finalBid)
-        .reduce((sum: number, r: any) => sum + (parseFloat(r.finalBid) || 0), 0);
+      const { data: campaign } = await supabase
+        .from("campaigns")
+        .select("*")
+        .eq("status", "Active")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .single();
 
       setData({
-        campaignName: brief.campaignName || "Untitled Campaign",
-        clientName: brief.clientName || "No client set",
-        msaBudget: brief.msaBudget || 0,
-        committed,
-        postingStartDate: brief.postingStartDate || "",
-        postingEndDate: brief.postingEndDate || "",
+        campaignName: campaign?.name || "No active campaign",
+        clientName: campaign?.client_name || "",
+        msaBudget: campaign?.msa_budget || 0,
+        committed: 0,
+        postingStartDate: campaign?.posting_start_date || "",
+        postingEndDate: campaign?.posting_end_date || "",
       });
       setError(null);
     } catch (err) {
-      setError("Failed to load dashboard data");
-      console.error(err);
+      // No active campaign found — show defaults rather than error state
+      setData({
+        campaignName: "No active campaign",
+        clientName: "",
+        msaBudget: 0,
+        committed: 0,
+        postingStartDate: "",
+        postingEndDate: "",
+      });
     } finally {
       setLoading(false);
     }
