@@ -47,13 +47,15 @@ async function getAccessToken(): Promise<string> {
 }
 
 export function normalizeHandle(raw: string): string {
-  if (!raw) return ''
+  if (!raw) return '';
   return raw
-    .replace(/^https?:\/\/(www\.)?(instagram|tiktok|youtube)\.com\//i, '')
-    .replace(/^@/, '')
-    .replace(/\/$/, '')
     .trim()
-    .toLowerCase()
+    .replace(/^https?:\/\//i, '')       // strip protocol
+    .replace(/^www\./i, '')             // strip www
+    .replace(/^[^/]*\//, '')            // strip domain (everything up to first slash)
+    .replace(/^@/, '')                  // strip leading @
+    .replace(/\/+$/, '')                // strip trailing slashes
+    .toLowerCase();
 }
 
 export async function fetchLatestExport(sheetId: string): Promise<Record<string, string>[]> {

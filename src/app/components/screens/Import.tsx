@@ -55,7 +55,6 @@ export function Import() {
     setImportResult(null);
 
     try {
-      // 1. Resolve campaign from context
       if (!activeCampaign) {
         setImportError("Select a campaign first, then import.");
         setImporting(false);
@@ -63,42 +62,23 @@ export function Import() {
       }
 
       const campaignId = activeCampaign.id;
-      const campaign = { sheet_id: activeCampaign.sheet_id };
 
-      if (!campaign.sheet_id) {
+      if (!activeCampaign.sheet_id) {
         setImportError("This campaign has no linked sheet.");
         setImporting(false);
         return;
       }
 
-      // 3. Fetch Latest_Export tab
-      const rows = await fetchLatestExport(campaign.sheet_id);
+      const rows = await fetchLatestExport(activeCampaign.sheet_id);
       const totalRows = rows.length;
 
-      // 4. Get existing handles for this campaign (normalized)
-      const { data: existing } = await supabase
-        .from("creators")
-        .select("handle")
-        .eq("campaign_id", campaignId);
+      // Map rows, keeping raw handle in `handle` and computed normalized_handle separately.
+      // Skip rows where normalized_handle is empty.
+      const toUpsert = rows.flatMap(row => {
+        const rawHandle = row["Handle"] ?? row["handle"] ?? "";
+        const normalizedHandle = normalizeHandle(rawHandle);
+        if (!normalizedHandle) return [];
 
-      const existingHandles = new Set(
-        (existing ?? []).map((c: any) => normalizeHandle(c.handle))
-      );
-
-      // 5. Filter net new
-      const netNew = rows.filter(row => {
-        const raw = row["Handle"] ?? row["handle"] ?? "";
-        return !existingHandles.has(normalizeHandle(raw));
-      });
-
-      if (netNew.length === 0) {
-        setImportResult({ newCreators: 0, duplicates: totalRows });
-        addRecentImport(0, totalRows);
-        return;
-      }
-
-      // 6. Map columns and insert
-      const toInsert = netNew.map(row => {
         const rawCategories = row["Categories"] ?? row["categories"] ?? "";
         const nicheTags = rawCategories
           ? rawCategories.split(",").map((s: string) => s.trim()).filter(Boolean)
@@ -107,9 +87,10 @@ export function Import() {
         const rawOffer = row["Offer"] ?? row["offer"] ?? "";
         const offer = rawOffer !== "" ? parseFloat(rawOffer) : null;
 
-        return {
+        return [{
           campaign_id: campaignId,
-          handle: normalizeHandle(row["Handle"] ?? row["handle"] ?? ""),
+          handle: rawHandle,
+          normalized_handle: normalizedHandle,
           name: row["Creator"] ?? row["creator"] ?? row["Name"] ?? row["name"] ?? "",
           email: row["Email"] ?? row["email"] ?? "",
           niche_tags: nicheTags,
@@ -119,23 +100,36 @@ export function Import() {
           offer: offer,
           status: "New",
           created_at: new Date().toISOString(),
-        };
+        }];
       });
 
-      const { data: inserted, error: insertError } = await supabase
-        .from("creators")
-        .insert(toInsert)
-        .select();
+      // Upsert in batches of 1000, accumulate inserted IDs.
+      const BATCH_SIZE = 1000;
+      let totalInserted = 0;
+      let upsertError: string | null = null;
 
-      if (insertError) {
-        setImportError(insertError.message);
+      for (let i = 0; i < toUpsert.length; i += BATCH_SIZE) {
+        const batch = toUpsert.slice(i, i + BATCH_SIZE);
+        const { data, error } = await supabase
+          .from("creators")
+          .upsert(batch, { onConflict: "campaign_id,normalized_handle", ignoreDuplicates: true })
+          .select("id");
+
+        if (error) {
+          upsertError = error.message;
+          break;
+        }
+        totalInserted += data?.length ?? 0;
+      }
+
+      if (upsertError) {
+        setImportError(upsertError);
         return;
       }
 
-      const newCreators = inserted?.length ?? 0;
-      const duplicates = totalRows - netNew.length;
-      setImportResult({ newCreators, duplicates });
-      addRecentImport(newCreators, duplicates);
+      const duplicates = totalRows - totalInserted;
+      setImportResult({ newCreators: totalInserted, duplicates });
+      addRecentImport(totalInserted, duplicates);
     } catch (err: any) {
       setImportError(err?.message ?? "Import failed — check the sheet connection.");
     } finally {

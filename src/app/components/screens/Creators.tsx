@@ -87,11 +87,26 @@ export function Creators() {
   const fetchCreators = async () => {
     if (!activeCampaign) { setLoading(false); return; }
     setLoading(true);
-    const { data } = await supabase
-      .from("creators")
-      .select("*")
-      .eq("campaign_id", activeCampaign.id)
-      .order("created_at", { ascending: false });
+
+    // Paginate past Supabase's 1000-row default cap.
+    const PAGE_SIZE = 1000;
+    let allRows: any[] = [];
+    let offset = 0;
+    while (true) {
+      const { data, error } = await supabase
+        .from("creators")
+        .select("*")
+        .eq("campaign_id", activeCampaign.id)
+        .order("created_at", { ascending: false })
+        .range(offset, offset + PAGE_SIZE - 1);
+
+      if (error || !data || data.length === 0) break;
+      allRows = allRows.concat(data);
+      if (data.length < PAGE_SIZE) break;
+      offset += PAGE_SIZE;
+    }
+
+    const data = allRows;
 
     if (data) {
       const normalised = data.map((r: any) => ({
