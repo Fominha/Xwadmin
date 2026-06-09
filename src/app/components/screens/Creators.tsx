@@ -127,7 +127,7 @@ export function Creators() {
         contentQuality: r.content_match ?? "",
         briefAlignment: r.content_match ?? "",
         audienceOverlap: r.audience_fit ?? "",
-        recRange: r.rec_range ?? "",
+        recRange: r.rec_range_low && r.rec_range_high ? `$${r.rec_range_low}–$${r.rec_range_high}` : "",
         daysSilent: r.days_silent ?? 0,
         opsNotes: r.ops_notes ?? "",
         production_tier: r.production_tier ?? null,
@@ -283,13 +283,14 @@ export function Creators() {
   };
 
   const buildScoringPayload = () => ({
-    content_match: scoringData.contentQuality,
-    audience_fit: scoringData.audienceOverlap,
+    content_match: scoringData.contentQuality ? Number(scoringData.contentQuality) : null,
+    audience_fit: scoringData.audienceOverlap ? Number(scoringData.audienceOverlap) : null,
+    audience_match: scoringData.briefAlignment,
+    category: scoringData.formatFit || null,
+    expected_plays: scoringData.estimatedViews || null,
     niche_tags: scoringData.nicheTags,
-    production_tier: scoringData.formatFit || null,
-    rec_range: scoringData.recRangeLow && scoringData.recRangeHigh
-      ? `$${scoringData.recRangeLow}–$${scoringData.recRangeHigh}`
-      : null,
+    rec_range_low: scoringData.recRangeLow ? Number(scoringData.recRangeLow) : null,
+    rec_range_high: scoringData.recRangeHigh ? Number(scoringData.recRangeHigh) : null,
     ops_notes: scoringData.notes,
     updated_at: new Date().toISOString(),
   });
@@ -534,7 +535,7 @@ export function Creators() {
                           <TableCell key={col} onClick={(e) => e.stopPropagation()}>
                             {/* FIX 2: raw handle field holds full URL */}
                             <a
-                              href={creator.handle?.startsWith('http') ? creator.handle : `https://${creator.handle}`}
+                              href={`https://instagram.com/${creator.handle}`}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="text-[#038B97] hover:underline text-sm"
