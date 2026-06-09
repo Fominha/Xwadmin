@@ -32,7 +32,8 @@ export function Creators() {
   const { activeCampaign } = useCampaign();
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
-  const [activeFilter, setActiveFilter] = useState("All");
+  type ActiveTab = 'all' | 'new' | 'scoring' | 'negotiating' | 'finalBidSet' | 'silent';
+  const [activeTab, setActiveTab] = useState<ActiveTab>('all');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   function toggleOne(id: string) {
@@ -40,17 +41,6 @@ export function Creators() {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
-      return next;
-    });
-  }
-
-  function toggleAll(visibleCreators: any[]) {
-    setSelectedIds(prev => {
-      const visibleIds = visibleCreators.map((c: any) => String(c.id));
-      const allSelected = visibleIds.length > 0 && visibleIds.every(id => prev.has(id));
-      const next = new Set(prev);
-      if (allSelected) visibleIds.forEach(id => next.delete(id));
-      else visibleIds.forEach(id => next.add(id));
       return next;
     });
   }
@@ -172,8 +162,11 @@ export function Creators() {
     fetchCreators();
   }, [activeCampaign?.id]);
 
-  // Reset page and clear selection when search changes
-  useEffect(() => { setPage(0); }, [searchQuery]);
+  // Reset page and selection when tab or search changes
+  useEffect(() => {
+    setSelectedIds(new Set());
+    setPage(0);
+  }, [activeTab, searchQuery]);
 
   // Bucket counters — single source of truth via getPipelineBucket / isSilent48h
   const counts = { all: 0, new: 0, scoring: 0, negotiating: 0, finalBidSet: 0, silent: 0 };
@@ -186,33 +179,41 @@ export function Creators() {
   const silentCreatorsCount = counts.silent;
   const showUrgencyBanner = silentCreatorsCount > 0 && !urgencyBannerDismissed;
 
-  // Search first, then tab filter
-  const q = searchQuery.trim().toLowerCase();
-  const searchFiltered = q
-    ? allCreators.filter(c =>
-        (c.name || '').toLowerCase().includes(q) ||
-        (c.handle || '').toLowerCase().includes(q)
-      )
-    : allCreators;
+  // 1. start from all creators
+  let list = allCreators;
 
-  const bucketForTab: Record<string, PipelineBucket> = {
-    "New": "new",
-    "Scoring": "scoring",
-    "Negotiating": "negotiating",
-    "Final bid set": "finalBidSet",
-  };
+  // 2. search (applied first)
+  const q = (searchQuery || '').trim().toLowerCase();
+  if (q) {
+    list = list.filter(c =>
+      (c.name || '').toLowerCase().includes(q) ||
+      (c.handle || '').toLowerCase().includes(q)
+    );
+  }
 
-  const tabFiltered = searchFiltered.filter(creator => {
-    if (activeFilter === "All") return true;
-    if (activeFilter === "Silent 48h+") return isSilent48h(creator);
-    const bucket = bucketForTab[activeFilter];
-    return bucket ? getPipelineBucket(creator) === bucket : true;
-  });
+  // 3. tab filter — explicit chain, no fallback
+  if (activeTab === 'new')              list = list.filter(c => getPipelineBucket(c) === 'new');
+  else if (activeTab === 'scoring')     list = list.filter(c => getPipelineBucket(c) === 'scoring');
+  else if (activeTab === 'negotiating') list = list.filter(c => getPipelineBucket(c) === 'negotiating');
+  else if (activeTab === 'finalBidSet') list = list.filter(c => getPipelineBucket(c) === 'finalBidSet');
+  else if (activeTab === 'silent')      list = list.filter(c => isSilent48h(c));
+  // activeTab === 'all' → no filter applied
 
-  // Pagination
+  // 4. pagination
   const PAGE_SIZE = 100;
-  const totalPages = Math.max(1, Math.ceil(tabFiltered.length / PAGE_SIZE));
-  const visible = tabFiltered.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
+  const totalPages = Math.max(1, Math.ceil(list.length / PAGE_SIZE));
+  const visibleCreators = list.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
+
+  function toggleAllVisible() {
+    setSelectedIds(prev => {
+      const ids = visibleCreators.map(c => String(c.id));
+      const allSelected = ids.length > 0 && ids.every(id => prev.has(id));
+      const next = new Set(prev);
+      if (allSelected) ids.forEach(id => next.delete(id));
+      else ids.forEach(id => next.add(id));
+      return next;
+    });
+  }
 
   const getRecRange = (ask: number) => calculateRecommendedRange(ask);
 
@@ -249,20 +250,13 @@ export function Creators() {
   };
 
   const getColumnsForFilter = () => {
-    switch (activeFilter) {
-      case "New":
-        return ["Creator", "Their ask", "Last contact"];
-      case "Scoring":
-        return ["Creator", "Their ask", "Content quality", "Brief alignment", "Last contact"];
-      case "Negotiating":
-        return ["Creator", "Their ask", "Rec. Range", "Last contact"];
-      case "Final bid set":
-        return ["Creator", "Their ask", "Rec. Range", "Final bid"];
-      case "Silent 48h+":
-        return ["Creator", "Their ask", "Last contact", "Days silent"];
-      default:
-        // "All" tab
-        return ["Creator", "Their ask", "Rec. Range", "Status", "Last contact"];
+    switch (activeTab) {
+      case 'new':         return ["Creator", "Their ask", "Last contact"];
+      case 'scoring':     return ["Creator", "Their ask", "Content quality", "Brief alignment", "Last contact"];
+      case 'negotiating': return ["Creator", "Their ask", "Rec. Range", "Last contact"];
+      case 'finalBidSet': return ["Creator", "Their ask", "Rec. Range", "Final bid"];
+      case 'silent':      return ["Creator", "Their ask", "Last contact", "Days silent"];
+      default:            return ["Creator", "Their ask", "Rec. Range", "Status", "Last contact"];
     }
   };
 
@@ -472,7 +466,7 @@ export function Creators() {
         {showUrgencyBanner && (
           <div className="bg-amber-100 border border-[#038B97] rounded-lg p-3 flex items-center justify-between">
             <button
-              onClick={() => setActiveFilter("Silent 48h+")}
+              onClick={() => setActiveTab('silent')}
               className="text-sm text-foreground hover:underline flex-1 text-left"
             >
               {silentCreatorsCount} creator{silentCreatorsCount !== 1 ? 's have' : ' has'} gone silent — follow up before they drop.
@@ -487,17 +481,24 @@ export function Creators() {
         )}
 
         <div className="flex gap-2 flex-wrap">
-          {STAGE_TABS.map((stage) => (
+          {([
+            { key: 'all',          label: 'All' },
+            { key: 'new',          label: 'New' },
+            { key: 'scoring',      label: 'Scoring' },
+            { key: 'negotiating',  label: 'Negotiating' },
+            { key: 'finalBidSet',  label: 'Final bid set' },
+            { key: 'silent',       label: 'Silent 48h+' },
+          ] as { key: ActiveTab; label: string }[]).map(({ key, label }) => (
             <button
-              key={stage}
-              onClick={() => { setActiveFilter(stage); setPage(0); setSelectedIds(new Set()); }}
+              key={key}
+              onClick={() => setActiveTab(key)}
               className={`px-3 py-1.5 rounded-full text-sm border transition-colors ${
-                activeFilter === stage
+                activeTab === key
                   ? "bg-[#038B97] text-white border-[#038B97]"
                   : "bg-white text-muted-foreground border-border hover:border-[#038B97]/50"
               }`}
             >
-              {stage}
+              {label}
             </button>
           ))}
         </div>
@@ -509,8 +510,8 @@ export function Creators() {
             <TableRow>
               <TableHead className="w-12">
                 <Checkbox
-                  checked={visible.length > 0 && visible.every(c => selectedIds.has(String(c.id)))}
-                  onCheckedChange={() => toggleAll(visible)}
+                  checked={visibleCreators.length > 0 && visibleCreators.every(c => selectedIds.has(String(c.id)))}
+                  onCheckedChange={toggleAllVisible}
                 />
               </TableHead>
               {getColumnsForFilter().map((col) => (
@@ -521,7 +522,7 @@ export function Creators() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {visible.map((creator) => {
+            {visibleCreators.map((creator) => {
               const columns = getColumnsForFilter();
               const actionButton = getPrimaryActionButton(creator);
               const stages = getPipelineStages(creator);
@@ -633,7 +634,7 @@ export function Creators() {
                         className={actionButton.variant === "outline-red" ? "border-red-500 text-red-600" : ""}
                         style={actionButton.variant === "teal" ? { backgroundColor: "#038B97" } : {}}
                         onClick={(e) => {
-                          if (creator.status === "New bid" || creator.status === "Scoring" || activeFilter === "New" || activeFilter === "Scoring") {
+                          if (creator.status === "New bid" || creator.status === "Scoring" || activeTab === "new" || activeTab === "scoring") {
                             openScoringPanel(creator, e);
                           }
                         }}
@@ -723,7 +724,7 @@ export function Creators() {
             Prev
           </Button>
           <span className="text-sm text-muted-foreground">
-            Page {page + 1} of {totalPages} · showing {visible.length} of {tabFiltered.length}
+            Page {page + 1} of {totalPages} · showing {visibleCreators.length} of {list.length}
           </span>
           <Button
             variant="outline"
@@ -744,23 +745,23 @@ export function Creators() {
       )}
 
       {/* Per-tab bulk action bar */}
-      {selectedIds.size > 0 && (activeFilter === "Scoring" || activeFilter === "Negotiating" || activeFilter === "Final bid set") && (
+      {selectedIds.size > 0 && (activeTab === 'scoring' || activeTab === 'negotiating' || activeTab === 'finalBidSet') && (
         <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-border px-8 py-4 flex items-center justify-between z-30">
           <span className="text-sm text-muted-foreground">
             {selectedIds.size} creator{selectedIds.size !== 1 ? "s" : ""} selected
           </span>
           <div className="flex items-center gap-3">
-            {activeFilter === "Scoring" && (
+            {activeTab === 'scoring' && (
               <Button disabled={pushing} style={{ backgroundColor: "#038B97" }} onClick={handlePushToNegotiating}>
                 {pushing ? "Moving..." : `Push to Negotiating (${selectedIds.size})`}
               </Button>
             )}
-            {activeFilter === "Negotiating" && (
+            {activeTab === 'negotiating' && (
               <Button disabled={pushing} style={{ backgroundColor: "#038B97" }} onClick={handleMoveToFinalBidSet}>
                 {pushing ? "Moving..." : `Move to Final bid set (${selectedIds.size})`}
               </Button>
             )}
-            {activeFilter === "Final bid set" && (
+            {activeTab === 'finalBidSet' && (
               <Button disabled={pushing} style={{ backgroundColor: "#038B97" }} onClick={handlePushForApproval}>
                 {pushing ? "Pushing..." : `Push for Lead Approval (${selectedIds.size})`}
               </Button>
