@@ -6,7 +6,7 @@ import { Input } from "../ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
 import { Search, X } from "lucide-react";
 import { CreatorSidePanel } from "../CreatorSidePanel";
-import { calculateRecommendedRange, getRecommendedRange, parseFollowers, TIER_SHORT } from "../../lib/scoring";
+import { calculateRecommendedRange, getRecommendedRange, parseFollowers, getPipelineBucket, TIER_SHORT } from "../../lib/scoring";
 import { getCurrentUser } from "../../lib/auth";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Textarea } from "../ui/textarea";
@@ -15,7 +15,7 @@ import { supabase } from "../../lib/supabase";
 import { useCampaign } from "../../lib/CampaignContext";
 import { CampaignSelector } from "../CampaignSelector";
 
-const STAGE_TABS = ["All", "New bid", "Scoring", "Negotiating", "Final bid set", "Silent 48h+"];
+const STAGE_TABS = ["All", "New", "Scoring", "Negotiating", "Final bid set", "Silent 48h+"];
 
 const statusStyles: Record<string, string> = {
   "New bid": "bg-amber-100 text-amber-700 border-amber-200",
@@ -57,6 +57,7 @@ export function Creators() {
   const [dismissedAutoFlags, setDismissedAutoFlags] = useState<string[]>([]);
   const [urgencyBannerDismissed, setUrgencyBannerDismissed] = useState(false);
   const [expandedCreatorId, setExpandedCreatorId] = useState<number | null>(null);
+  const [page, setPage] = useState(0);
 
   useEffect(() => {
     const user = getCurrentUser();
@@ -120,6 +121,7 @@ export function Creators() {
           : "—",
         theirAsk: r.offer ?? 0,
         ask: r.ask ?? 0,
+        finalBidAmount: r.final_bid ?? 0,
         finalBid: r.final_bid ? `$${r.final_bid}` : "",
         status: r.status ?? "New",
         lastContact: r.updated_at ? new Date(r.updated_at).toLocaleDateString() : "—",
@@ -144,55 +146,40 @@ export function Creators() {
     fetchCreators();
   }, [activeCampaign?.id]);
 
-  // Priority sorting order for All tab
-  const priorityOrder: Record<string, number> = {
-    "Silent 48h+": 1,
-    "Final bid set": 2,
-    "Negotiating": 3,
-    "Counter sent": 4,
-    "New bid": 5,
-    "Scoring": 6,
+  // Bucket counters — single source of truth via getPipelineBucket
+  const silentCreatorsCount = allCreators.filter(c => c.status === "Silent 48h+" || c.daysSilent >= 2).length;
+  const counts = { new: 0, scoring: 0, negotiating: 0, finalBidSet: 0, silent: 0 };
+  for (const c of allCreators) counts[getPipelineBucket(c)]++;
+  counts.silent = silentCreatorsCount;
+
+  const showUrgencyBanner = silentCreatorsCount > 0 && !urgencyBannerDismissed;
+
+  // Tab → bucket mapping
+  const bucketForTab: Record<string, string> = {
+    "New": "new",
+    "Scoring": "scoring",
+    "Negotiating": "negotiating",
+    "Final bid set": "finalBidSet",
   };
 
-  // Sort creators by priority
-  const sortedCreators = [...allCreators].sort((a, b) => {
-    const aOrder = priorityOrder[a.status] || 999;
-    const bOrder = priorityOrder[b.status] || 999;
-    return aOrder - bOrder;
+  // Filter by active tab using getPipelineBucket (Silent keeps its own logic)
+  const searchFiltered = allCreators.filter(creator => {
+    if (!searchQuery) return true;
+    const query = searchQuery.toLowerCase();
+    return creator.name.toLowerCase().includes(query) || creator.handle.toLowerCase().includes(query);
   });
 
-  // Filter creators by stage tab (using DB status values)
-  const filteredCreators = sortedCreators.filter((creator) => {
-    let stageMatch = true;
-    if (activeFilter === "New bid") {
-      stageMatch = creator.status === "New" && creator.theirAsk > 0;
-    } else if (activeFilter === "Scoring") {
-      stageMatch = creator.status === "Scoring" || creator.status === "Scored";
-    } else if (activeFilter === "Negotiating") {
-      stageMatch = creator.status === "Negotiating" || creator.status === "Counter sent";
-    } else if (activeFilter === "Final bid set") {
-      stageMatch = creator.status === "Final bid set";
-    } else if (activeFilter === "Silent 48h+") {
-      stageMatch = creator.status === "Silent 48h+" || creator.daysSilent >= 2;
-    }
-    // "All" matches everything
-
-    if (!stageMatch) return false;
-
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
-      return (
-        creator.name.toLowerCase().includes(query) ||
-        creator.handle.toLowerCase().includes(query)
-      );
-    }
-    return true;
+  const tabFiltered = searchFiltered.filter(creator => {
+    if (activeFilter === "All") return true;
+    if (activeFilter === "Silent 48h+") return creator.status === "Silent 48h+" || creator.daysSilent >= 2;
+    const bucket = bucketForTab[activeFilter];
+    return bucket ? getPipelineBucket(creator) === bucket : true;
   });
 
-  const creators = filteredCreators;
-
-  const silentCreatorsCount = allCreators.filter(c => c.status === "Silent 48h+" || c.daysSilent >= 2).length;
-  const showUrgencyBanner = silentCreatorsCount > 0 && !urgencyBannerDismissed;
+  // Pagination
+  const PAGE_SIZE = 100;
+  const totalPages = Math.max(1, Math.ceil(tabFiltered.length / PAGE_SIZE));
+  const visible = tabFiltered.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
 
   const getRecRange = (ask: number) => calculateRecommendedRange(ask);
 
@@ -230,7 +217,7 @@ export function Creators() {
 
   const getColumnsForFilter = () => {
     switch (activeFilter) {
-      case "New bid":
+      case "New":
         return ["Creator", "Their ask", "Last contact"];
       case "Scoring":
         return ["Creator", "Their ask", "Content quality", "Brief alignment", "Last contact"];
@@ -350,13 +337,13 @@ export function Creators() {
     setPushing(false);
   };
 
-  // Ledger counts
+  // Ledger derived from bucket counts
   const ledger = {
-    newBid: allCreators.filter(c => c.status === "New" && c.theirAsk > 0).length,
-    scoringNeeded: allCreators.filter(c => c.status === "New" && (!c.theirAsk || c.theirAsk === 0)).length,
-    negotiating: allCreators.filter(c => c.status === "Negotiating" || c.status === "Counter sent").length,
-    finalBidSet: allCreators.filter(c => c.status === "Final bid set").length,
-    silent: silentCreatorsCount,
+    newBid: counts.new,
+    scoringNeeded: counts.scoring,
+    negotiating: counts.negotiating,
+    finalBidSet: counts.finalBidSet,
+    silent: counts.silent,
   };
 
   if (!activeCampaign) {
@@ -425,7 +412,7 @@ export function Creators() {
       {/* Stage ledger */}
       <div className="grid grid-cols-5 gap-3">
         {[
-          { label: "New bid", count: ledger.newBid },
+          { label: "New", count: ledger.newBid },
           { label: "Scoring needed", count: ledger.scoringNeeded },
           { label: "Negotiating", count: ledger.negotiating },
           { label: "Final bid set", count: ledger.finalBidSet },
@@ -467,7 +454,7 @@ export function Creators() {
           {STAGE_TABS.map((stage) => (
             <button
               key={stage}
-              onClick={() => setActiveFilter(stage)}
+              onClick={() => { setActiveFilter(stage); setPage(0); }}
               className={`px-3 py-1.5 rounded-full text-sm border transition-colors ${
                 activeFilter === stage
                   ? "bg-[#038B97] text-white border-[#038B97]"
@@ -495,7 +482,7 @@ export function Creators() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {creators.map((creator) => {
+            {visible.map((creator) => {
               const columns = getColumnsForFilter();
               const actionButton = getPrimaryActionButton(creator);
               const stages = getPipelineStages(creator);
@@ -525,7 +512,9 @@ export function Creators() {
                         return <TableCell key={col}>${creator.theirAsk}</TableCell>;
                       }
                       if (col === "Rec. Range") {
-                        const range = getRecommendedRange(creator.theirAsk, parseFollowers(creator.followers));
+                        const range = Number(creator.theirAsk) > 0
+                          ? getRecommendedRange(creator.theirAsk, parseFollowers(creator.followers))
+                          : null;
                         return (
                           <TableCell key={col}>
                             {range === null ? (
@@ -609,7 +598,7 @@ export function Creators() {
                         className={actionButton.variant === "outline-red" ? "border-red-500 text-red-600" : ""}
                         style={actionButton.variant === "teal" ? { backgroundColor: "#038B97" } : {}}
                         onClick={(e) => {
-                          if (creator.status === "New bid" || creator.status === "Scoring" || activeFilter === "New bid" || activeFilter === "Scoring") {
+                          if (creator.status === "New bid" || creator.status === "Scoring" || activeFilter === "New" || activeFilter === "Scoring") {
                             openScoringPanel(creator, e);
                           }
                         }}
@@ -676,6 +665,30 @@ export function Creators() {
           </TableBody>
         </Table>
       </div>
+
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between px-1">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={page === 0}
+            onClick={() => setPage(p => p - 1)}
+          >
+            Prev
+          </Button>
+          <span className="text-sm text-muted-foreground">
+            Page {page + 1} of {totalPages}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={page >= totalPages - 1}
+            onClick={() => setPage(p => p + 1)}
+          >
+            Next
+          </Button>
+        </div>
+      )}
 
       {selectedCreator && (
         <CreatorSidePanel

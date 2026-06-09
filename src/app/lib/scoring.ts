@@ -124,11 +124,28 @@ export function getRecommendedRange(
   }
 
   let low = Math.round((ask * minPercent) / 100 / 50) * 50;
-  const high = Math.round((ask * maxPercent) / 100 / 50) * 50;
+  let high = Math.round((ask * maxPercent) / 100 / 50) * 50;
 
   const { tier, floor } = getTier(followers);
   const belowFloor = ask < floor;
   low = Math.max(low, floor);
 
+  high = Math.max(low, high);
+  low = Math.round(low / 50) * 50;
+  high = Math.round(high / 50) * 50;
+
   return { low, high, tier, floor, belowFloor };
+}
+
+export type PipelineBucket = 'new' | 'scoring' | 'negotiating' | 'finalBidSet' | 'silent';
+
+export function getPipelineBucket(creator: any): PipelineBucket {
+  const ask = Number(creator.theirAsk) || 0;
+  const finalBid = Number(creator.finalBidAmount) || 0;
+  const status = creator.status;
+
+  if (status === 'Negotiating') return 'negotiating';
+  if (finalBid > 0) return 'finalBidSet';
+  if (ask > 0) return 'scoring';
+  return 'new';
 }
