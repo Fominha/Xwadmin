@@ -1,15 +1,22 @@
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router";
+import { useNavigate, useSearchParams } from "react-router";
 import { Upload, ArrowRight, FileSpreadsheet } from "lucide-react";
 import { Button } from "../ui/button";
 import { Progress } from "../ui/progress";
 import { getCurrentUser } from "../../lib/auth";
 import { supabase } from "../../lib/supabase";
-import { fetchLatestExport } from "../../lib/sheetsApi";
+import { fetchLatestExport, normalizeHandle } from "../../lib/sheetsApi";
+
+interface RecentImport {
+  label: string;
+  date: string;
+  creatorsAdded: number;
+  duplicatesSkipped: number;
+}
 
 export function Import() {
   const navigate = useNavigate();
-  const campaignId = localStorage.getItem("xw_campaign_id");
+  const [searchParams] = useSearchParams();
 
   useEffect(() => {
     const user = getCurrentUser();
@@ -17,10 +24,29 @@ export function Import() {
       navigate("/dashboard");
     }
   }, [navigate]);
+
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
-  const [importResult, setImportResult] = useState<any>(null);
+  const [importResult, setImportResult] = useState<{ newCreators: number; duplicates: number } | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
+  const [recentImports, setRecentImports] = useState<RecentImport[]>([]);
+
+  const getActiveCampaignId = async (): Promise<string | null> => {
+    const fromUrl = searchParams.get("campaign");
+    if (fromUrl) return fromUrl;
+    const fromStorage = localStorage.getItem("xw_campaign_id");
+    if (fromStorage) return fromStorage;
+
+    const { data } = await supabase
+      .from("campaigns")
+      .select("id")
+      .eq("status", "Active")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .single();
+    return data?.id ?? null;
+  };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -32,11 +58,6 @@ export function Import() {
         if (progress >= 100) {
           clearInterval(interval);
           setUploading(false);
-          setImportResult({
-            newCreators: 124,
-            duplicates: 18,
-            inNegotiation: 47,
-          });
         }
       }, 200);
     }
@@ -44,64 +65,109 @@ export function Import() {
 
   const handleSheetImport = async () => {
     setImporting(true);
+    setImportError(null);
+    setImportResult(null);
+
     try {
-      // 1. Fetch campaign's sheet_id from Supabase
+      // 1. Resolve campaign
+      const campaignId = await getActiveCampaignId();
+      if (!campaignId) {
+        setImportError("Open a campaign first, then import.");
+        setImporting(false);
+        return;
+      }
+
+      // 2. Fetch campaign's sheet_id
       const { data: campaign, error: campaignError } = await supabase
         .from("campaigns")
         .select("sheet_id")
         .eq("id", campaignId)
         .single();
 
-      if (campaignError || !campaign) throw new Error("Campaign not found");
+      if (campaignError || !campaign?.sheet_id) {
+        setImportError("Campaign not found or has no linked sheet.");
+        setImporting(false);
+        return;
+      }
 
-      // 2. Fetch Latest_Export tab from Google Sheets
+      // 3. Fetch Latest_Export tab
       const rows = await fetchLatestExport(campaign.sheet_id);
+      const totalRows = rows.length;
 
-      // 3. Get existing creator handles for this campaign
+      // 4. Get existing handles for this campaign (normalized)
       const { data: existing } = await supabase
         .from("creators")
         .select("handle")
         .eq("campaign_id", campaignId);
 
-      const existingHandles = new Set(existing?.map((c: any) => c.handle) ?? []);
+      const existingHandles = new Set(
+        (existing ?? []).map((c: any) => normalizeHandle(c.handle))
+      );
 
-      // 4. Filter net new
-      const netNew = rows.filter(row => !existingHandles.has(row["Handle"] ?? row["handle"]));
+      // 5. Filter net new
+      const netNew = rows.filter(row => {
+        const raw = row["Handle"] ?? row["handle"] ?? "";
+        return !existingHandles.has(normalizeHandle(raw));
+      });
 
-      // 5. Insert net new into Supabase creators table
-      if (netNew.length > 0) {
-        await supabase.from("creators").insert(
-          netNew.map(row => ({
-            campaign_id: campaignId,
-            handle: row["Handle"] ?? row["handle"],
-            name: row["Name"] ?? row["name"] ?? "",
-            followers: parseInt(row["Followers"] ?? "0"),
-            category: row["Category"] ?? row["category"] ?? "",
-            email: row["Email"] ?? row["email"] ?? "",
-            status: "New",
-            created_at: new Date().toISOString(),
-          }))
-        );
+      if (netNew.length === 0) {
+        setImportResult({ newCreators: 0, duplicates: totalRows });
+        addRecentImport(0, totalRows);
+        return;
       }
 
-      setImportResult({
-        newCreators: netNew.length,
-        duplicates: rows.length - netNew.length,
-        inNegotiation: 0,
+      // 6. Map columns and insert
+      const toInsert = netNew.map(row => {
+        const rawCategories = row["Categories"] ?? row["categories"] ?? "";
+        const nicheTags = rawCategories
+          ? rawCategories.split(",").map((s: string) => s.trim()).filter(Boolean)
+          : [];
+
+        const rawOffer = row["Offer"] ?? row["offer"] ?? "";
+        const offer = rawOffer !== "" ? parseFloat(rawOffer) : null;
+
+        return {
+          campaign_id: campaignId,
+          handle: normalizeHandle(row["Handle"] ?? row["handle"] ?? ""),
+          name: row["Creator"] ?? row["creator"] ?? row["Name"] ?? row["name"] ?? "",
+          email: row["Email"] ?? row["email"] ?? "",
+          niche_tags: nicheTags,
+          followers: parseInt(row["Followers"] ?? row["followers"] ?? "0") || 0,
+          expected_plays: parseInt(row["Exp. Plays"] ?? row["exp_plays"] ?? "0") || null,
+          engagement: parseInt(row["Exp. Interactions"] ?? row["exp_interactions"] ?? "0") || null,
+          offer: offer,
+          status: "New",
+          created_at: new Date().toISOString(),
+        };
       });
-    } catch (err) {
-      console.error("Import failed:", err);
-      setImportResult({ newCreators: 0, duplicates: 0, inNegotiation: 0 });
+
+      const { data: inserted, error: insertError } = await supabase
+        .from("creators")
+        .insert(toInsert)
+        .select();
+
+      if (insertError) {
+        setImportError(insertError.message);
+        return;
+      }
+
+      const newCreators = inserted?.length ?? 0;
+      const duplicates = totalRows - netNew.length;
+      setImportResult({ newCreators, duplicates });
+      addRecentImport(newCreators, duplicates);
+    } catch (err: any) {
+      setImportError(err?.message ?? "Import failed — check the sheet connection.");
     } finally {
       setImporting(false);
     }
   };
 
-  const recentImports = [
-    { batch: "Batch 10", date: "Apr 22, 2026 - 2:15 PM", creatorsAdded: 124, duplicatesSkipped: 18 },
-    { batch: "Batch 9", date: "Apr 21, 2026 - 4:30 PM", creatorsAdded: 89, duplicatesSkipped: 12 },
-    { batch: "Batch 8", date: "Apr 20, 2026 - 11:20 AM", creatorsAdded: 156, duplicatesSkipped: 23 },
-  ];
+  const addRecentImport = (added: number, skipped: number) => {
+    const now = new Date();
+    const label = `Import ${now.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
+    const date = now.toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+    setRecentImports(prev => [{ label, date, creatorsAdded: added, duplicatesSkipped: skipped }, ...prev].slice(0, 10));
+  };
 
   return (
     <div className="p-8 max-w-7xl mx-auto space-y-6">
@@ -173,6 +239,10 @@ export function Import() {
               )}
             </Button>
           </div>
+
+          {importError && (
+            <p className="text-sm text-destructive text-center">{importError}</p>
+          )}
         </div>
       </div>
 
@@ -180,7 +250,7 @@ export function Import() {
       {importResult && (
         <div className="bg-white rounded-lg border border-border p-6 space-y-4">
           <h3 className="text-lg">Import Complete</h3>
-          <div className="grid grid-cols-3 gap-6">
+          <div className="grid grid-cols-2 gap-6">
             <div>
               <div className="text-3xl text-[#038B97] mb-1">{importResult.newCreators}</div>
               <div className="text-sm text-muted-foreground">New creators added</div>
@@ -188,10 +258,6 @@ export function Import() {
             <div>
               <div className="text-3xl text-muted-foreground mb-1">{importResult.duplicates}</div>
               <div className="text-sm text-muted-foreground">Duplicates skipped</div>
-            </div>
-            <div>
-              <div className="text-3xl text-[#038B97] mb-1">{importResult.inNegotiation}</div>
-              <div className="text-sm text-muted-foreground">Now in negotiation</div>
             </div>
           </div>
         </div>
@@ -203,24 +269,28 @@ export function Import() {
           <h3 className="text-sm">Recent imports</h3>
         </div>
         <div className="divide-y divide-border">
-          {recentImports.map((importItem, idx) => (
-            <div key={idx} className="p-4 flex items-center justify-between">
-              <div>
-                <div className="text-sm mb-1">{importItem.batch}</div>
-                <div className="text-xs text-muted-foreground">{importItem.date}</div>
-              </div>
-              <div className="flex gap-6 text-sm">
-                <div className="text-right">
-                  <div className="text-green-600">{importItem.creatorsAdded}</div>
-                  <div className="text-xs text-muted-foreground">Creators added</div>
+          {recentImports.length === 0 ? (
+            <div className="p-4 text-sm text-muted-foreground text-center">No imports this session</div>
+          ) : (
+            recentImports.map((item, idx) => (
+              <div key={idx} className="p-4 flex items-center justify-between">
+                <div>
+                  <div className="text-sm mb-1">{item.label}</div>
+                  <div className="text-xs text-muted-foreground">{item.date}</div>
                 </div>
-                <div className="text-right">
-                  <div className="text-muted-foreground">{importItem.duplicatesSkipped}</div>
-                  <div className="text-xs text-muted-foreground">Duplicates skipped</div>
+                <div className="flex gap-6 text-sm">
+                  <div className="text-right">
+                    <div className="text-green-600">{item.creatorsAdded}</div>
+                    <div className="text-xs text-muted-foreground">Creators added</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-muted-foreground">{item.duplicatesSkipped}</div>
+                    <div className="text-xs text-muted-foreground">Duplicates skipped</div>
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            ))
+          )}
         </div>
       </div>
     </div>

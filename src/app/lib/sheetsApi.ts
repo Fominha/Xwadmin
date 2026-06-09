@@ -46,6 +46,16 @@ async function getAccessToken(): Promise<string> {
   return data.access_token
 }
 
+export function normalizeHandle(raw: string): string {
+  if (!raw) return ''
+  return raw
+    .replace(/^https?:\/\/(www\.)?(instagram|tiktok|youtube)\.com\//i, '')
+    .replace(/^@/, '')
+    .replace(/\/$/, '')
+    .trim()
+    .toLowerCase()
+}
+
 export async function fetchLatestExport(sheetId: string): Promise<Record<string, string>[]> {
   const token = await getAccessToken()
   const res = await fetch(

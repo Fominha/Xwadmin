@@ -28,7 +28,9 @@ const statusStyles: Record<string, string> = {
 export function Creators() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const campaignId = searchParams.get("campaign") || localStorage.getItem("xw_campaign_id");
+  const [campaignId, setCampaignId] = useState<string | null>(
+    searchParams.get("campaign") || localStorage.getItem("xw_campaign_id")
+  );
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeFilter, setActiveFilter] = useState(searchParams.get("filter") || "All");
@@ -83,35 +85,55 @@ export function Creators() {
   // Fetch creators from Supabase
   const [allCreators, setAllCreators] = useState<any[]>([]);
 
-  const fetchCreators = async () => {
-    if (!campaignId) { setLoading(false); return; }
+  const resolveCampaignId = async (): Promise<string | null> => {
+    const fromUrl = searchParams.get("campaign");
+    if (fromUrl) { localStorage.setItem("xw_campaign_id", fromUrl); return fromUrl; }
+    const fromStorage = localStorage.getItem("xw_campaign_id");
+    if (fromStorage) return fromStorage;
+    // Fall back to most recent active campaign
+    const { data } = await supabase
+      .from("campaigns")
+      .select("id")
+      .eq("status", "Active")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .single();
+    if (data?.id) { localStorage.setItem("xw_campaign_id", data.id); return data.id; }
+    return null;
+  };
+
+  const fetchCreators = async (cid?: string | null) => {
+    const id = cid ?? campaignId;
+    if (!id) { setLoading(false); return; }
     setLoading(true);
     const { data } = await supabase
       .from("creators")
       .select("*")
-      .eq("campaign_id", campaignId)
+      .eq("campaign_id", id)
       .order("created_at", { ascending: false });
 
     if (data) {
-      // Normalise Supabase rows to the shape the rest of the UI expects
       const normalised = data.map((r: any) => ({
         id: r.id,
         name: r.name ?? "",
         handle: r.handle ?? "",
-        followers: r.followers ? `${Math.round(r.followers / 1000)}K` : "—",
-        size: "—",
-        theirAsk: r.bid ?? r.their_ask ?? 0,
-        status: r.status ?? "New bid",
-        lastContact: r.updated_at ? new Date(r.updated_at).toLocaleDateString() : "—",
-        contentQuality: r.content_quality ?? "",
-        briefAlignment: r.brief_alignment ?? "",
-        audienceOverlap: r.audience_overlap ?? "",
-        recRange: r.rec_range ?? "",
+        followers: r.followers
+          ? r.followers >= 1000000
+            ? `${(r.followers / 1000000).toFixed(1)}M`
+            : `${Math.round(r.followers / 1000)}K`
+          : "—",
+        theirAsk: r.offer ?? 0,
+        ask: r.ask ?? 0,
         finalBid: r.final_bid ? `$${r.final_bid}` : "",
+        status: r.status ?? "New",
+        lastContact: r.updated_at ? new Date(r.updated_at).toLocaleDateString() : "—",
+        contentQuality: r.content_match ?? "",
+        briefAlignment: r.content_match ?? "",
+        audienceOverlap: r.audience_fit ?? "",
+        recRange: r.rec_range ?? "",
         daysSilent: r.days_silent ?? 0,
         pipelineStage: r.pipeline_stage ?? 0,
         opsNotes: r.ops_notes ?? "",
-        score: r.score ?? null,
         production_tier: r.production_tier ?? null,
         content_match: r.content_match ?? null,
         audience_fit: r.audience_fit ?? null,
@@ -123,7 +145,14 @@ export function Creators() {
   };
 
   useEffect(() => {
-    fetchCreators();
+    resolveCampaignId().then(id => {
+      if (id && id !== campaignId) setCampaignId(id);
+      else fetchCreators(id);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (campaignId) fetchCreators(campaignId);
   }, [campaignId]);
 
   // Priority sorting order for All tab
@@ -286,29 +315,26 @@ export function Creators() {
   const saveScoringData = async () => {
     if (!scoringCreator) return;
     await supabase.from("creators").update({
-      content_quality: scoringData.contentQuality,
-      brief_alignment: scoringData.briefAlignment,
-      audience_overlap: scoringData.audienceOverlap,
+      content_match: scoringData.contentQuality,
+      audience_fit: scoringData.audienceOverlap,
       niche_tags: scoringData.nicheTags,
-      format_fit: scoringData.formatFit,
-      past_brand_deal: scoringData.pastBrandDeal,
-      estimated_views: scoringData.estimatedViews ? parseInt(scoringData.estimatedViews) : null,
+      production_tier: scoringData.formatFit || null,
+      ask: scoringData.recRangeLow ? parseFloat(scoringData.recRangeLow) : null,
       rec_range: scoringData.recRangeLow && scoringData.recRangeHigh
         ? `$${scoringData.recRangeLow}–$${scoringData.recRangeHigh}`
         : null,
-      risk_flag: scoringData.riskFlag,
       ops_notes: scoringData.notes,
       status: "Scored",
       updated_at: new Date().toISOString(),
     }).eq("id", scoringCreator.id);
-    await fetchCreators();
+    await fetchCreators(campaignId);
     setToastMsg("Scoring saved");
     closeScoringPanel();
   };
 
   const handlePushToFundify = async () => {
     const selectedCreators = allCreators.filter(c => selectedIds.includes(c.id));
-    const unscored = selectedCreators.filter(c => c.score === null && c.production_tier === null);
+    const unscored = selectedCreators.filter(c => c.content_match === null && c.production_tier === null);
     if (unscored.length > 0) return;
 
     setPushing(true);
@@ -330,7 +356,7 @@ export function Creators() {
       }))
     );
 
-    await fetchCreators();
+    await fetchCreators(campaignId);
     setSelectedIds([]);
     setToastMsg(`${selectedCreators.length} creator${selectedCreators.length !== 1 ? "s" : ""} pushed to Fundify`);
     setPushing(false);
@@ -636,19 +662,19 @@ export function Creators() {
           <div className="relative group">
             <Button
               style={
-                allCreators.filter(c => selectedIds.includes(c.id)).every(c => c.score !== null || c.production_tier !== null)
+                allCreators.filter(c => selectedIds.includes(c.id)).every(c => c.content_match !== null || c.production_tier !== null)
                   ? { backgroundColor: "#038B97" }
                   : {}
               }
               disabled={
                 pushing ||
-                !allCreators.filter(c => selectedIds.includes(c.id)).every(c => c.score !== null || c.production_tier !== null)
+                !allCreators.filter(c => selectedIds.includes(c.id)).every(c => c.content_match !== null || c.production_tier !== null)
               }
               onClick={handlePushToFundify}
             >
               {pushing ? "Pushing..." : `Push to Fundify (${selectedIds.length})`}
             </Button>
-            {!allCreators.filter(c => selectedIds.includes(c.id)).every(c => c.score !== null || c.production_tier !== null) && (
+            {!allCreators.filter(c => selectedIds.includes(c.id)).every(c => c.content_match !== null || c.production_tier !== null) && (
               <div className="absolute bottom-full right-0 mb-2 px-3 py-1.5 bg-gray-900 text-white text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
                 All selected creators must be scored first
               </div>

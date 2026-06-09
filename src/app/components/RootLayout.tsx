@@ -1,7 +1,6 @@
 import { Outlet, NavLink, useLocation, useNavigate } from "react-router";
-import { Menu, X, Home, FileText, Upload, Users, CheckCircle, ShoppingCart, Link2, Settings, Layers } from "lucide-react";
+import { Menu, X, Home, FileText, Upload, Users, CheckCircle, ShoppingCart, Settings, Layers, LogOut } from "lucide-react";
 import { useState, useEffect } from "react";
-import { DisconnectSheetModal } from "./modals/DisconnectSheetModal";
 import { getCurrentUser, logout } from "../lib/auth";
 import { supabase } from "../lib/supabase";
 
@@ -11,8 +10,6 @@ export function RootLayout() {
   );
   const location = useLocation();
   const navigate = useNavigate();
-  const [hasSheet, setHasSheet] = useState(false);
-  const [disconnectModalOpen, setDisconnectModalOpen] = useState(false);
   const [user, setUser] = useState(getCurrentUser());
   const [approvalsBadgeCount, setApprovalsBadgeCount] = useState(2);
   const [ordersBadgeCount, setOrdersBadgeCount] = useState(0);
@@ -24,13 +21,6 @@ export function RootLayout() {
       return;
     }
     setUser(currentUser);
-
-    const sheetId = localStorage.getItem("xw_sheet_id");
-    setHasSheet(!!sheetId);
-
-    if (!sheetId && location.pathname !== "/connect") {
-      navigate("/connect");
-    }
 
     // Initialize badge count from localStorage
     const storedCount = localStorage.getItem("xw_approvals_count");
@@ -57,18 +47,16 @@ export function RootLayout() {
         setApprovalsBadgeCount(parseInt(storedCount, 10));
       }
     };
-
     window.addEventListener("storage", handleStorageChange);
     return () => window.removeEventListener("storage", handleStorageChange);
   }, []);
 
-  const handleDisconnect = () => {
-    localStorage.removeItem("xw_sheet_id");
-    setHasSheet(false);
-    navigate("/connect");
+  const handleSwitchRole = () => {
+    logout();
+    navigate("/login");
   };
 
-  const handleSwitchRole = () => {
+  const handleLogout = () => {
     logout();
     navigate("/login");
   };
@@ -163,6 +151,16 @@ export function RootLayout() {
             );
           })}
         </nav>
+
+        <div className="p-4 border-t border-border">
+          <button
+            onClick={handleLogout}
+            className="flex items-center gap-3 w-full px-3 py-2 rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground transition-colors text-sm"
+          >
+            <LogOut className="w-5 h-5" />
+            <span>Log out</span>
+          </button>
+        </div>
       </aside>
 
       <main className="flex-1 overflow-auto">
@@ -174,28 +172,8 @@ export function RootLayout() {
             <Menu className="w-5 h-5" />
           </button>
         </div>
-        {hasSheet && location.pathname !== "/connect" && (
-          <div className="bg-white border-b border-border px-6 py-2 flex items-center justify-between">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Link2 className="w-4 h-4 text-[#038B97]" />
-              <span>Connected to campaign sheet</span>
-            </div>
-            <button
-              onClick={() => setDisconnectModalOpen(true)}
-              className="text-sm text-muted-foreground hover:text-destructive"
-            >
-              Disconnect
-            </button>
-          </div>
-        )}
         <Outlet />
       </main>
-
-      <DisconnectSheetModal
-        open={disconnectModalOpen}
-        onClose={() => setDisconnectModalOpen(false)}
-        onConfirm={handleDisconnect}
-      />
     </div>
   );
 }
