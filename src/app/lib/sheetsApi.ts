@@ -3,8 +3,11 @@ async function getAccessToken(): Promise<string> {
   const key = JSON.parse(raw)
   const now = Math.floor(Date.now() / 1000)
 
-  const header = btoa(JSON.stringify({ alg: 'RS256', typ: 'JWT' }))
-  const claim = btoa(JSON.stringify({
+  const toBase64Url = (str: string) =>
+    btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+
+  const header = toBase64Url(JSON.stringify({ alg: 'RS256', typ: 'JWT' }))
+  const claim = toBase64Url(JSON.stringify({
     iss: key.client_email,
     scope: 'https://www.googleapis.com/auth/spreadsheets.readonly',
     aud: 'https://oauth2.googleapis.com/token',
@@ -14,7 +17,8 @@ async function getAccessToken(): Promise<string> {
 
   const signingInput = `${header}.${claim}`
 
-  const pemBody = key.private_key
+  const privateKeyPem = key.private_key.replace(/\\n/g, '\n')
+  const pemBody = privateKeyPem
     .replace(/-----BEGIN PRIVATE KEY-----/, '')
     .replace(/-----END PRIVATE KEY-----/, '')
     .replace(/\n/g, '')
@@ -31,7 +35,7 @@ async function getAccessToken(): Promise<string> {
     new TextEncoder().encode(signingInput)
   )
 
-  const jwt = `${signingInput}.${btoa(String.fromCharCode(...new Uint8Array(signature)))}`
+  const jwt = `${signingInput}.${toBase64Url(String.fromCharCode(...new Uint8Array(signature)))}`
 
   const res = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
