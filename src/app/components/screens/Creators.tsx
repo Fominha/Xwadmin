@@ -6,7 +6,7 @@ import { Input } from "../ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
 import { Search, X } from "lucide-react";
 import { CreatorSidePanel } from "../CreatorSidePanel";
-import { calculateRecommendedRange, getRecommendedRange, parseFollowers, getPipelineBucket, isSilent48h, PipelineBucket, TIER_SHORT } from "../../lib/scoring";
+import { calculateRecommendedRange, getRecommendedRange, parseFollowers, isSilent48h } from "../../lib/scoring";
 import { getCurrentUser } from "../../lib/auth";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Textarea } from "../ui/textarea";
@@ -15,24 +15,13 @@ import { supabase } from "../../lib/supabase";
 import { useCampaign } from "../../lib/CampaignContext";
 import { CampaignSelector } from "../CampaignSelector";
 
-const STAGE_TABS = ["All", "New", "Scoring", "Negotiating", "Final bid set", "Silent 48h+"];
-
-const statusStyles: Record<string, string> = {
-  "New bid": "bg-amber-100 text-amber-700 border-amber-200",
-  "Scoring": "bg-blue-100 text-blue-700 border-blue-200",
-  "Negotiating": "bg-[#038B97]/10 text-[#038B97] border-[#038B97]/20",
-  "Counter sent": "bg-gray-100 text-gray-700 border-gray-200",
-  "Silent 48h+": "bg-red-100 text-red-700 border-red-200",
-  "Final bid set": "bg-green-100 text-green-700 border-green-200",
-  "Passed back": "bg-purple-100 text-purple-700 border-purple-200",
-};
+type ActiveTab = 'all' | 'hasBid' | 'scoring' | 'negotiating' | 'finalBidSet' | 'holding' | 'silent';
 
 export function Creators() {
   const navigate = useNavigate();
   const { activeCampaign } = useCampaign();
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
-  type ActiveTab = 'all' | 'new' | 'scoring' | 'negotiating' | 'finalBidSet' | 'silent';
   const [activeTab, setActiveTab] = useState<ActiveTab>('all');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
@@ -44,6 +33,7 @@ export function Creators() {
       return next;
     });
   }
+
   const [selectedCreator, setSelectedCreator] = useState<any>(null);
   const [toastMsg, setToastMsg] = useState("");
   const [pushing, setPushing] = useState(false);
@@ -62,27 +52,17 @@ export function Creators() {
     riskFlag: "",
     notes: "",
   });
-  const [passedBackCreators, setPassedBackCreators] = useState<Record<number, string>>({});
   const [nicheSearchQuery, setNicheSearchQuery] = useState("");
   const [dismissedAutoFlags, setDismissedAutoFlags] = useState<string[]>([]);
   const [urgencyBannerDismissed, setUrgencyBannerDismissed] = useState(false);
   const [expandedCreatorId, setExpandedCreatorId] = useState<number | null>(null);
   const [page, setPage] = useState(0);
-  const [bulkSkipped, setBulkSkipped] = useState(0);
 
   useEffect(() => {
     const user = getCurrentUser();
     if (user?.role !== "ops") {
       navigate("/dashboard");
     }
-
-    // Load passed back creators from localStorage
-    const passedBack = JSON.parse(localStorage.getItem("xw_passed_back_creators") || "[]");
-    const passedBackMap: Record<number, string> = {};
-    passedBack.forEach((item: any) => {
-      passedBackMap[item.id] = item.reason;
-    });
-    setPassedBackCreators(passedBackMap);
   }, [navigate]);
 
   // Toast auto-dismiss
@@ -135,6 +115,8 @@ export function Creators() {
         finalBidAmount: r.final_bid ?? 0,
         finalBid: r.final_bid ? `$${r.final_bid}` : "",
         status: r.status ?? "New",
+        stage: r.stage ?? 'new',
+        pushedForApproval: r.pushed_for_approval ?? false,
         last_contact: r.last_contact ?? null,
         lastContact: r.last_contact
           ? new Date(r.last_contact).toLocaleDateString()
@@ -146,7 +128,6 @@ export function Creators() {
         audienceOverlap: r.audience_fit ?? "",
         recRange: r.rec_range ?? "",
         daysSilent: r.days_silent ?? 0,
-        pipelineStage: r.pipeline_stage ?? 0,
         opsNotes: r.ops_notes ?? "",
         production_tier: r.production_tier ?? null,
         content_match: r.content_match ?? null,
@@ -168,11 +149,14 @@ export function Creators() {
     setPage(0);
   }, [activeTab, searchQuery]);
 
-  // Bucket counters — single source of truth via getPipelineBucket / isSilent48h
-  const counts = { all: 0, new: 0, scoring: 0, negotiating: 0, finalBidSet: 0, silent: 0 };
+  // Counters — bucketed by stage
+  const counts = { new: 0, hasBid: 0, scoring: 0, negotiating: 0, finalBidSet: 0, silent: 0 };
   for (const c of allCreators) {
-    counts.all++;
-    counts[getPipelineBucket(c)]++;
+    if (c.stage === 'new')            counts.new++;
+    else if (c.stage === 'has_bid')   counts.hasBid++;
+    else if (c.stage === 'scoring')   counts.scoring++;
+    else if (c.stage === 'negotiating') counts.negotiating++;
+    else if (c.stage === 'final_bid_set') counts.finalBidSet++;
     if (isSilent48h(c)) counts.silent++;
   }
 
@@ -182,7 +166,7 @@ export function Creators() {
   // 1. start from all creators
   let list = allCreators;
 
-  // 2. search (applied first)
+  // 2. search (applied first) — multi-word: every word must appear somewhere in name or handle
   const q = (searchQuery || '').trim().toLowerCase();
   if (q) {
     const words = q.split(/\s+/).filter(Boolean);
@@ -193,12 +177,21 @@ export function Creators() {
   }
 
   // 3. tab filter — explicit chain, no fallback
-  if (activeTab === 'new')              list = list.filter(c => getPipelineBucket(c) === 'new');
-  else if (activeTab === 'scoring')     list = list.filter(c => getPipelineBucket(c) === 'scoring');
-  else if (activeTab === 'negotiating') list = list.filter(c => getPipelineBucket(c) === 'negotiating');
-  else if (activeTab === 'finalBidSet') list = list.filter(c => getPipelineBucket(c) === 'finalBidSet');
-  else if (activeTab === 'silent')      list = list.filter(c => isSilent48h(c));
-  // activeTab === 'all' → no filter applied
+  if (activeTab === 'all') {
+    list = list.filter(c => ['new', 'has_bid', 'scoring', 'negotiating', 'final_bid_set'].includes(c.stage));
+  } else if (activeTab === 'hasBid') {
+    list = list.filter(c => c.stage === 'has_bid');
+  } else if (activeTab === 'scoring') {
+    list = list.filter(c => c.stage === 'scoring');
+  } else if (activeTab === 'negotiating') {
+    list = list.filter(c => c.stage === 'negotiating');
+  } else if (activeTab === 'finalBidSet') {
+    list = list.filter(c => c.stage === 'final_bid_set');
+  } else if (activeTab === 'holding') {
+    list = list.filter(c => c.stage === 'holding');
+  } else if (activeTab === 'silent') {
+    list = list.filter(c => isSilent48h(c));
+  }
 
   // 4. pagination
   const PAGE_SIZE = 100;
@@ -216,48 +209,16 @@ export function Creators() {
     });
   }
 
-  const getRecRange = (ask: number) => calculateRecommendedRange(ask);
-
-  const getPrimaryActionButton = (creator: any) => {
-    if (creator.status === "Silent 48h+") {
-      return { label: "Follow up →", variant: "outline-red" };
-    }
-    if (creator.status === "New bid") {
-      return { label: "Score now →", variant: "teal" };
-    }
-    if (creator.status === "Scoring") {
-      const isComplete = creator.contentQuality && creator.briefAlignment;
-      return isComplete ? { label: "Send counter →", variant: "teal" } : { label: "Complete scoring →", variant: "teal" };
-    }
-    if (creator.status === "Negotiating" || creator.status === "Counter sent") {
-      if (creator.daysSilent > 2) {
-        return { label: "Follow up →", variant: "outline-red" };
-      }
-      return creator.status === "Counter sent" ? { label: "Mark final bid →", variant: "teal" } : { label: "Send counter →", variant: "teal" };
-    }
-    if (creator.status === "Final bid set") {
-      return { label: "Send to Lead →", variant: "teal" };
-    }
-    return { label: "Review", variant: "teal" };
-  };
-
-  const getPipelineStages = (creator: any) => {
-    const stages = ["Scored", "Counter sent", "Final bid", "Sent to Lead", "Client ready"];
-    const currentStage = creator.pipelineStage;
-    return stages.map((stage, idx) => ({
-      name: stage,
-      status: idx < currentStage ? "completed" : idx === currentStage ? "current" : "pending",
-    }));
-  };
-
-  const getColumnsForFilter = () => {
+  const getColumnsForTab = (): string[] => {
     switch (activeTab) {
-      case 'new':         return ["Creator", "Their ask", "Last contact"];
-      case 'scoring':     return ["Creator", "Their ask", "Content quality", "Brief alignment", "Last contact"];
-      case 'negotiating': return ["Creator", "Their ask", "Rec. Range", "Last contact"];
-      case 'finalBidSet': return ["Creator", "Their ask", "Rec. Range", "Final bid"];
-      case 'silent':      return ["Creator", "Their ask", "Last contact", "Days silent"];
-      default:            return ["Creator", "Their ask", "Rec. Range", "Status", "Last contact"];
+      case 'all':          return ["Creator", "Handle", "Their ask", "Stage"];
+      case 'hasBid':       return ["Creator", "Handle", "Their ask", "Rec. Range"];
+      case 'scoring':      return ["Creator", "Handle", "Their ask", "Content quality", "Brief alignment"];
+      case 'negotiating':  return ["Creator", "Handle", "Their ask", "Rec. Range", "Last contact"];
+      case 'finalBidSet':  return ["Creator", "Handle", "Their ask", "Final bid"];
+      case 'holding':      return ["Creator", "Handle", "Their ask"];
+      case 'silent':       return ["Creator", "Handle", "Their ask", "Last contact", "Days silent"];
+      default:             return ["Creator", "Handle", "Their ask"];
     }
   };
 
@@ -335,44 +296,62 @@ export function Creators() {
     closeScoringPanel();
   };
 
-  const handlePushToNegotiating = async () => {
-    if (selectedIds.size === 0) return;
+  // Per-row stage transitions
+  const handlePassToScoring = async (creatorId: number, e: React.MouseEvent) => {
+    e.stopPropagation();
     setPushing(true);
-    const now = new Date().toISOString();
-    const ids = Array.from(selectedIds);
-    await supabase.from("creators").update({ status: "Negotiating", last_contact: now }).in("id", ids);
+    await supabase.from("creators").update({ stage: 'scoring' }).eq("id", creatorId);
     await fetchCreators();
-    const count = ids.length;
-    setSelectedIds(new Set());
-    setToastMsg(`${count} moved to Negotiating`);
+    setToastMsg("Moved to Scoring");
     setPushing(false);
   };
 
-  const handleMoveToFinalBidSet = async () => {
-    if (selectedIds.size === 0) return;
+  const handleWaitlist = async (creatorId: number, e: React.MouseEvent) => {
+    e.stopPropagation();
     setPushing(true);
-    const selected = allCreators.filter(c => selectedIds.has(String(c.id)));
-    const eligible = selected.filter(c => c.finalBidAmount > 0);
-    const skipped = selected.length - eligible.length;
-    if (eligible.length > 0) {
-      await supabase.from("creators").update({ status: "FinalBidSet" }).in("id", eligible.map(c => c.id));
-    }
+    await supabase.from("creators").update({ stage: 'holding' }).eq("id", creatorId);
     await fetchCreators();
-    setSelectedIds(new Set());
-    setBulkSkipped(skipped);
-    setToastMsg(skipped > 0 ? `${eligible.length} moved · ${skipped} skipped (no final bid)` : `${eligible.length} moved to Final bid set`);
+    setToastMsg("Moved to Holding");
     setPushing(false);
   };
 
-  const handlePushForApproval = async () => {
-    if (selectedIds.size === 0) return;
+  const handleApproveForNegotiating = async (creatorId: number, e: React.MouseEvent) => {
+    e.stopPropagation();
     setPushing(true);
-    const ids = Array.from(selectedIds);
-    await supabase.from("creators").update({ status: "PendingApproval" }).in("id", ids);
+    await supabase.from("creators").update({ stage: 'negotiating', last_contact: new Date().toISOString() }).eq("id", creatorId);
     await fetchCreators();
-    const count = ids.length;
-    setSelectedIds(new Set());
-    setToastMsg(`${count} pushed for Lead approval`);
+    setToastMsg("Approved for Negotiating");
+    setPushing(false);
+  };
+
+  const handleNotApproved = async (creatorId: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setPushing(true);
+    await supabase.from("creators").update({ stage: 'holding' }).eq("id", creatorId);
+    await fetchCreators();
+    setToastMsg("Moved to Holding");
+    setPushing(false);
+  };
+
+  const handlePushForLeadApproval = async (creatorId: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setPushing(true);
+    await supabase.from("creators").update({
+      stage: 'final_bid_set',
+      pushed_for_approval: true,
+      pushed_at: new Date().toISOString(),
+    }).eq("id", creatorId);
+    await fetchCreators();
+    setToastMsg("Pushed for Lead approval");
+    setPushing(false);
+  };
+
+  const handleReActivate = async (creatorId: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setPushing(true);
+    await supabase.from("creators").update({ stage: 'has_bid' }).eq("id", creatorId);
+    await fetchCreators();
+    setToastMsg("Re-activated");
     setPushing(false);
   };
 
@@ -383,13 +362,14 @@ export function Creators() {
     setToastMsg("Contact logged");
   };
 
-  const ledger = {
-    newBid: counts.new,
-    scoringNeeded: counts.scoring,
-    negotiating: counts.negotiating,
-    finalBidSet: counts.finalBidSet,
-    silent: counts.silent,
-    all: counts.all,
+  const STAGE_DISPLAY: Record<string, string> = {
+    new: 'New',
+    has_bid: 'Has bid',
+    scoring: 'Scoring',
+    negotiating: 'Negotiating',
+    final_bid_set: 'Final bid set',
+    pending_approval: 'Pending approval',
+    holding: 'Holding',
   };
 
   if (!activeCampaign) {
@@ -441,11 +421,11 @@ export function Creators() {
       <div className="space-y-2">
         <div className="grid grid-cols-5 gap-3">
           {[
-            { label: "New", count: ledger.newBid },
-            { label: "Scoring needed", count: ledger.scoringNeeded },
-            { label: "Negotiating", count: ledger.negotiating },
-            { label: "Final bid set", count: ledger.finalBidSet },
-            { label: "Silent 48h+", count: ledger.silent },
+            { label: "New", count: counts.new },
+            { label: "Creators with bids", count: counts.hasBid },
+            { label: "Scoring", count: counts.scoring },
+            { label: "Negotiating", count: counts.negotiating },
+            { label: "Final bid set", count: counts.finalBidSet },
           ].map(stat => (
             <div key={stat.label} className="bg-white rounded-lg border border-border p-3 text-center">
               <div className="text-xl mb-0.5">{stat.count}</div>
@@ -453,7 +433,7 @@ export function Creators() {
             </div>
           ))}
         </div>
-        <div className="text-xs text-muted-foreground text-right">Lifetime: {ledger.all}</div>
+        <div className="text-xs text-muted-foreground text-right">Lifetime: {allCreators.length}</div>
       </div>
 
       <div className="space-y-4">
@@ -483,12 +463,13 @@ export function Creators() {
 
         <div className="flex gap-2 flex-wrap">
           {([
-            { key: 'all',          label: 'All' },
-            { key: 'new',          label: 'New' },
-            { key: 'scoring',      label: 'Scoring' },
-            { key: 'negotiating',  label: 'Negotiating' },
-            { key: 'finalBidSet',  label: 'Final bid set' },
-            { key: 'silent',       label: 'Silent 48h+' },
+            { key: 'all',         label: 'All' },
+            { key: 'hasBid',      label: 'Creators with bids' },
+            { key: 'scoring',     label: 'Scoring' },
+            { key: 'negotiating', label: 'Negotiating' },
+            { key: 'finalBidSet', label: 'Final bid set' },
+            { key: 'holding',     label: 'Holding' },
+            { key: 'silent',      label: 'Silent 48h+' },
           ] as { key: ActiveTab; label: string }[]).map(({ key, label }) => (
             <button
               key={key}
@@ -515,18 +496,15 @@ export function Creators() {
                   onCheckedChange={toggleAllVisible}
                 />
               </TableHead>
-              {getColumnsForFilter().map((col) => (
+              {getColumnsForTab().map((col) => (
                 <TableHead key={col}>{col}</TableHead>
               ))}
-              <TableHead>Pipeline</TableHead>
               <TableHead>Action</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {visibleCreators.map((creator) => {
-              const columns = getColumnsForFilter();
-              const actionButton = getPrimaryActionButton(creator);
-              const stages = getPipelineStages(creator);
+              const columns = getColumnsForTab();
               const isExpanded = expandedCreatorId === creator.id;
 
               return (
@@ -543,10 +521,44 @@ export function Creators() {
                     </TableCell>
                     {columns.map((col) => {
                       if (col === "Creator") {
-                        return <TableCell key={col}>{creator.name}</TableCell>;
+                        return (
+                          <TableCell key={col} className="max-w-[220px]">
+                            <div className="flex items-center gap-2">
+                              <span className="truncate" title={creator.name}>{creator.name}</span>
+                              {col === "Creator" && activeTab === 'finalBidSet' && creator.pushedForApproval && (
+                                <span className="shrink-0 px-1.5 py-0.5 rounded-full text-xs bg-[#038B97]/10 text-[#038B97] border border-[#038B97]/20 whitespace-nowrap">
+                                  Pushed ✓
+                                </span>
+                              )}
+                            </div>
+                          </TableCell>
+                        );
+                      }
+                      if (col === "Handle") {
+                        return (
+                          <TableCell key={col} onClick={(e) => e.stopPropagation()}>
+                            <a
+                              href={creator.handle.startsWith('http') ? creator.handle : `https://${creator.handle}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-[#038B97] hover:underline text-sm"
+                            >
+                              {creator.handle || '—'}
+                            </a>
+                          </TableCell>
+                        );
                       }
                       if (col === "Their ask") {
                         return <TableCell key={col}>${creator.theirAsk}</TableCell>;
+                      }
+                      if (col === "Stage") {
+                        return (
+                          <TableCell key={col}>
+                            <span className="text-xs text-muted-foreground">
+                              {STAGE_DISPLAY[creator.stage] ?? creator.stage}
+                            </span>
+                          </TableCell>
+                        );
                       }
                       if (col === "Rec. Range") {
                         const range = Number(creator.theirAsk) > 0
@@ -576,72 +588,103 @@ export function Creators() {
                         return <TableCell key={col} className="text-sm">{creator.briefAlignment || "—"}</TableCell>;
                       }
                       if (col === "Final bid") {
-                        return <TableCell key={col} className="text-sm">{creator.finalBid || "—"}</TableCell>;
-                      }
-                      if (col === "Days silent") {
-                        return <TableCell key={col} className="text-sm text-red-600">{creator.daysSilent} days</TableCell>;
-                      }
-                      if (col === "Status") {
                         return (
-                          <TableCell key={col}>
-                            {passedBackCreators[creator.id] ? (
-                              <span className={`px-2 py-1 rounded-full text-xs border inline-flex flex-col ${statusStyles["Passed back"]}`}>
-                                <span>Passed back</span>
-                                <span className="text-[10px] text-muted-foreground mt-0.5">{passedBackCreators[creator.id]}</span>
-                              </span>
-                            ) : (
-                              <span className={`px-2 py-1 rounded-full text-xs border ${statusStyles[creator.status]}`}>
-                                {creator.status}
-                              </span>
-                            )}
+                          <TableCell key={col} className="text-sm">
+                            {creator.finalBid || "—"}
                           </TableCell>
                         );
                       }
                       if (col === "Last contact") {
                         return <TableCell key={col} className="text-sm text-muted-foreground">{creator.lastContact}</TableCell>;
                       }
+                      if (col === "Days silent") {
+                        return <TableCell key={col} className="text-sm text-red-600">{creator.daysSilent} days</TableCell>;
+                      }
                       return null;
                     })}
-                    {/* Pipeline stage track */}
-                    <TableCell>
-                      <div className="flex items-center gap-1">
-                        {stages.map((stage, idx) => (
-                          <div
-                            key={idx}
-                            className="group relative"
-                            title={stage.name}
-                          >
-                            <div
-                              className={`w-2 h-2 rounded-full ${
-                                stage.status === "completed"
-                                  ? "bg-[#038B97]"
-                                  : stage.status === "current"
-                                  ? "bg-amber-500"
-                                  : "bg-gray-300"
-                              }`}
-                            />
-                            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-gray-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
-                              {stage.name}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </TableCell>
-                    {/* Action button */}
+                    {/* Per-tab action buttons */}
                     <TableCell onClick={(e) => e.stopPropagation()}>
-                      <Button
-                        size="sm"
-                        variant={actionButton.variant === "outline-red" ? "outline" : "default"}
-                        className={actionButton.variant === "outline-red" ? "border-red-500 text-red-600" : ""}
-                        style={actionButton.variant === "teal" ? { backgroundColor: "#038B97" } : {}}
-                        onClick={(e) => {
-                          if (creator.status === "New bid" || creator.status === "Scoring" || activeTab === "new" || activeTab === "scoring") {
-                            openScoringPanel(creator, e);
-                          }
-                        }}
-                      >
-                        {actionButton.label}
-                      </Button>
+                      <div className="flex items-center gap-2">
+                        {activeTab === 'hasBid' && (
+                          <>
+                            <Button
+                              size="sm"
+                              disabled={pushing}
+                              style={{ backgroundColor: "#038B97" }}
+                              onClick={(e) => handlePassToScoring(creator.id, e)}
+                            >
+                              Pass to scoring
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={pushing}
+                              onClick={(e) => handleWaitlist(creator.id, e)}
+                            >
+                              Waitlist
+                            </Button>
+                          </>
+                        )}
+                        {activeTab === 'scoring' && (
+                          <>
+                            <Button
+                              size="sm"
+                              disabled={pushing}
+                              style={{ backgroundColor: "#038B97" }}
+                              onClick={(e) => handleApproveForNegotiating(creator.id, e)}
+                            >
+                              Approve for negotiating
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={pushing}
+                              onClick={(e) => handleNotApproved(creator.id, e)}
+                            >
+                              Not approved
+                            </Button>
+                          </>
+                        )}
+                        {activeTab === 'negotiating' && (
+                          <Button
+                            size="sm"
+                            style={{ backgroundColor: "#038B97" }}
+                            onClick={(e) => openScoringPanel(creator, e)}
+                          >
+                            Edit deal
+                          </Button>
+                        )}
+                        {activeTab === 'finalBidSet' && (
+                          <Button
+                            size="sm"
+                            disabled={pushing || creator.pushedForApproval}
+                            style={!creator.pushedForApproval ? { backgroundColor: "#038B97" } : {}}
+                            variant={creator.pushedForApproval ? "outline" : "default"}
+                            onClick={(e) => handlePushForLeadApproval(creator.id, e)}
+                          >
+                            {creator.pushedForApproval ? "Pushed ✓" : "Push for Lead approval"}
+                          </Button>
+                        )}
+                        {activeTab === 'holding' && (
+                          <Button
+                            size="sm"
+                            disabled={pushing}
+                            style={{ backgroundColor: "#038B97" }}
+                            onClick={(e) => handleReActivate(creator.id, e)}
+                          >
+                            Re-activate
+                          </Button>
+                        )}
+                        {(activeTab === 'all' || activeTab === 'silent') && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={(e) => openScoringPanel(creator, e)}
+                          >
+                            Review
+                          </Button>
+                        )}
+                      </div>
                     </TableCell>
                   </TableRow>
                   {isExpanded && (
@@ -685,7 +728,7 @@ export function Creators() {
                             >
                               Edit scoring →
                             </button>
-                            {creator.status === "Negotiating" && (
+                            {creator.stage === "negotiating" && (
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -743,32 +786,6 @@ export function Creators() {
           creator={selectedCreator}
           onClose={() => setSelectedCreator(null)}
         />
-      )}
-
-      {/* Per-tab bulk action bar */}
-      {selectedIds.size > 0 && (activeTab === 'scoring' || activeTab === 'negotiating' || activeTab === 'finalBidSet') && (
-        <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-border px-8 py-4 flex items-center justify-between z-30">
-          <span className="text-sm text-muted-foreground">
-            {selectedIds.size} creator{selectedIds.size !== 1 ? "s" : ""} selected
-          </span>
-          <div className="flex items-center gap-3">
-            {activeTab === 'scoring' && (
-              <Button disabled={pushing} style={{ backgroundColor: "#038B97" }} onClick={handlePushToNegotiating}>
-                {pushing ? "Moving..." : `Push to Negotiating (${selectedIds.size})`}
-              </Button>
-            )}
-            {activeTab === 'negotiating' && (
-              <Button disabled={pushing} style={{ backgroundColor: "#038B97" }} onClick={handleMoveToFinalBidSet}>
-                {pushing ? "Moving..." : `Move to Final bid set (${selectedIds.size})`}
-              </Button>
-            )}
-            {activeTab === 'finalBidSet' && (
-              <Button disabled={pushing} style={{ backgroundColor: "#038B97" }} onClick={handlePushForApproval}>
-                {pushing ? "Pushing..." : `Push for Lead Approval (${selectedIds.size})`}
-              </Button>
-            )}
-          </div>
-        </div>
       )}
 
       {toastMsg && (
