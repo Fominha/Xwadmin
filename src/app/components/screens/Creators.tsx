@@ -6,7 +6,7 @@ import { Input } from "../ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
 import { Search, X } from "lucide-react";
 import { CreatorSidePanel } from "../CreatorSidePanel";
-import { calculateRecommendedRange, getRecommendedRange, parseFollowers, isSilent48h } from "../../lib/scoring";
+import { getRecommendedRange, parseFollowers, isSilent48h } from "../../lib/scoring";
 import { getCurrentUser } from "../../lib/auth";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Textarea } from "../ui/textarea";
@@ -15,7 +15,7 @@ import { supabase } from "../../lib/supabase";
 import { useCampaign } from "../../lib/CampaignContext";
 import { CampaignSelector } from "../CampaignSelector";
 
-type ActiveTab = 'all' | 'hasBid' | 'scoring' | 'negotiating' | 'finalBidSet' | 'holding' | 'silent';
+type ActiveTab = 'all' | 'bidsToScore' | 'negotiating' | 'finalBidSet' | 'waitlisted' | 'notQualified' | 'silent';
 
 export function Creators() {
   const navigate = useNavigate();
@@ -51,6 +51,7 @@ export function Creators() {
     recRangeHigh: "",
     riskFlag: "",
     notes: "",
+    finalBidValue: "",
   });
   const [nicheSearchQuery, setNicheSearchQuery] = useState("");
   const [dismissedAutoFlags, setDismissedAutoFlags] = useState<string[]>([]);
@@ -65,7 +66,6 @@ export function Creators() {
     }
   }, [navigate]);
 
-  // Toast auto-dismiss
   useEffect(() => {
     if (toastMsg) {
       const t = setTimeout(() => setToastMsg(""), 3000);
@@ -73,14 +73,12 @@ export function Creators() {
     }
   }, [toastMsg]);
 
-  // Fetch creators from Supabase
   const [allCreators, setAllCreators] = useState<any[]>([]);
 
   const fetchCreators = async () => {
     if (!activeCampaign) { setLoading(false); return; }
     setLoading(true);
 
-    // Paginate past Supabase's 1000-row default cap.
     const PAGE_SIZE = 1000;
     let allRows: any[] = [];
     let offset = 0;
@@ -111,6 +109,7 @@ export function Creators() {
             : `${Math.round(r.followers / 1000)}K`
           : "—",
         theirAsk: r.offer ?? 0,
+        offerAmount: r.offer ?? 0,
         ask: r.ask ?? 0,
         finalBidAmount: r.final_bid ?? 0,
         finalBid: r.final_bid ? `$${r.final_bid}` : "",
@@ -143,20 +142,20 @@ export function Creators() {
     fetchCreators();
   }, [activeCampaign?.id]);
 
-  // Reset page and selection when tab or search changes
   useEffect(() => {
     setSelectedIds(new Set());
     setPage(0);
   }, [activeTab, searchQuery]);
 
   // Counters — bucketed by stage
-  const counts = { new: 0, hasBid: 0, scoring: 0, negotiating: 0, finalBidSet: 0, silent: 0 };
+  const counts = { new: 0, bidsToScore: 0, negotiating: 0, finalBidSet: 0, silent: 0, waitlisted: 0, notQualified: 0 };
   for (const c of allCreators) {
-    if (c.stage === 'new')            counts.new++;
-    else if (c.stage === 'has_bid')   counts.hasBid++;
-    else if (c.stage === 'scoring')   counts.scoring++;
+    if (c.stage === 'new')              counts.new++;
+    else if (c.stage === 'has_bid')     counts.bidsToScore++;
     else if (c.stage === 'negotiating') counts.negotiating++;
     else if (c.stage === 'final_bid_set') counts.finalBidSet++;
+    else if (c.stage === 'waitlisted')  counts.waitlisted++;
+    else if (c.stage === 'not_qualified') counts.notQualified++;
     if (isSilent48h(c)) counts.silent++;
   }
 
@@ -166,7 +165,7 @@ export function Creators() {
   // 1. start from all creators
   let list = allCreators;
 
-  // 2. search (applied first) — multi-word: every word must appear somewhere in name or handle
+  // 2. search — multi-word: every word must appear somewhere in name or handle
   const q = (searchQuery || '').trim().toLowerCase();
   if (q) {
     const words = q.split(/\s+/).filter(Boolean);
@@ -178,17 +177,17 @@ export function Creators() {
 
   // 3. tab filter — explicit chain, no fallback
   if (activeTab === 'all') {
-    list = list.filter(c => ['new', 'has_bid', 'scoring', 'negotiating', 'final_bid_set'].includes(c.stage));
-  } else if (activeTab === 'hasBid') {
+    list = list.filter(c => ['new', 'has_bid', 'negotiating', 'final_bid_set'].includes(c.stage));
+  } else if (activeTab === 'bidsToScore') {
     list = list.filter(c => c.stage === 'has_bid');
-  } else if (activeTab === 'scoring') {
-    list = list.filter(c => c.stage === 'scoring');
   } else if (activeTab === 'negotiating') {
     list = list.filter(c => c.stage === 'negotiating');
   } else if (activeTab === 'finalBidSet') {
     list = list.filter(c => c.stage === 'final_bid_set');
-  } else if (activeTab === 'holding') {
-    list = list.filter(c => c.stage === 'holding');
+  } else if (activeTab === 'waitlisted') {
+    list = list.filter(c => c.stage === 'waitlisted');
+  } else if (activeTab === 'notQualified') {
+    list = list.filter(c => c.stage === 'not_qualified');
   } else if (activeTab === 'silent') {
     list = list.filter(c => isSilent48h(c));
   }
@@ -212,11 +211,11 @@ export function Creators() {
   const getColumnsForTab = (): string[] => {
     switch (activeTab) {
       case 'all':          return ["Creator", "Handle", "Their ask", "Stage"];
-      case 'hasBid':       return ["Creator", "Handle", "Their ask", "Rec. Range"];
-      case 'scoring':      return ["Creator", "Handle", "Their ask", "Content quality", "Brief alignment"];
+      case 'bidsToScore':  return ["Creator", "Handle", "Their ask", "Rec. Range"];
       case 'negotiating':  return ["Creator", "Handle", "Their ask", "Rec. Range", "Last contact"];
       case 'finalBidSet':  return ["Creator", "Handle", "Their ask", "Final bid"];
-      case 'holding':      return ["Creator", "Handle", "Their ask"];
+      case 'waitlisted':   return ["Creator", "Handle", "Their ask"];
+      case 'notQualified': return ["Creator", "Handle", "Their ask"];
       case 'silent':       return ["Creator", "Handle", "Their ask", "Last contact", "Days silent"];
       default:             return ["Creator", "Handle", "Their ask"];
     }
@@ -239,6 +238,7 @@ export function Creators() {
       recRangeHigh: range ? String(range.high) : "",
       riskFlag: "",
       notes: "",
+      finalBidValue: creator.offerAmount ? String(creator.offerAmount) : "",
     });
     setDismissedAutoFlags([]);
   };
@@ -246,17 +246,9 @@ export function Creators() {
   const getAutoDetectedFlags = (creator: any) => {
     const flags: string[] = [];
     const systemHigh = parseInt(scoringData.recRangeHigh || "0");
-
-    if (creator.status === "Silent 48h+") {
-      flags.push("Silent 48h+");
-    }
-    if (systemHigh > 0 && creator.theirAsk > systemHigh * 2) {
-      flags.push("Overpriced");
-    }
-    if (!scoringData.pastBrandDeal) {
-      flags.push("Unproven");
-    }
-
+    if (isSilent48h(creator)) flags.push("Silent 48h+");
+    if (systemHigh > 0 && creator.theirAsk > systemHigh * 2) flags.push("Overpriced");
+    if (!scoringData.pastBrandDeal) flags.push("Unproven");
     return flags.filter(f => !dismissedAutoFlags.includes(f));
   };
 
@@ -276,60 +268,40 @@ export function Creators() {
     setDismissedAutoFlags([]);
   };
 
-  const saveScoringData = async () => {
+  const buildScoringPayload = () => ({
+    content_match: scoringData.contentQuality,
+    audience_fit: scoringData.audienceOverlap,
+    niche_tags: scoringData.nicheTags,
+    production_tier: scoringData.formatFit || null,
+    ask: scoringData.recRangeLow ? parseFloat(scoringData.recRangeLow) : null,
+    rec_range: scoringData.recRangeLow && scoringData.recRangeHigh
+      ? `$${scoringData.recRangeLow}–$${scoringData.recRangeHigh}`
+      : null,
+    ops_notes: scoringData.notes,
+    updated_at: new Date().toISOString(),
+  });
+
+  const handleOutcome = async (stage: string, extra: Record<string, any> = {}) => {
     if (!scoringCreator) return;
+    setPushing(true);
     await supabase.from("creators").update({
-      content_match: scoringData.contentQuality,
-      audience_fit: scoringData.audienceOverlap,
-      niche_tags: scoringData.nicheTags,
-      production_tier: scoringData.formatFit || null,
-      ask: scoringData.recRangeLow ? parseFloat(scoringData.recRangeLow) : null,
-      rec_range: scoringData.recRangeLow && scoringData.recRangeHigh
-        ? `$${scoringData.recRangeLow}–$${scoringData.recRangeHigh}`
-        : null,
-      ops_notes: scoringData.notes,
-      status: "Scored",
-      updated_at: new Date().toISOString(),
+      ...buildScoringPayload(),
+      stage,
+      ...extra,
     }).eq("id", scoringCreator.id);
     await fetchCreators();
-    setToastMsg("Scoring saved");
     closeScoringPanel();
+    setToastMsg(`Creator moved to ${stage.replace(/_/g, ' ')}`);
+    setPushing(false);
   };
 
   // Per-row stage transitions
-  const handlePassToScoring = async (creatorId: number, e: React.MouseEvent) => {
+  const handleReActivate = async (creatorId: number, e: React.MouseEvent) => {
     e.stopPropagation();
     setPushing(true);
-    await supabase.from("creators").update({ stage: 'scoring' }).eq("id", creatorId);
+    await supabase.from("creators").update({ stage: 'has_bid' }).eq("id", creatorId);
     await fetchCreators();
-    setToastMsg("Moved to Scoring");
-    setPushing(false);
-  };
-
-  const handleWaitlist = async (creatorId: number, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setPushing(true);
-    await supabase.from("creators").update({ stage: 'holding' }).eq("id", creatorId);
-    await fetchCreators();
-    setToastMsg("Moved to Holding");
-    setPushing(false);
-  };
-
-  const handleApproveForNegotiating = async (creatorId: number, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setPushing(true);
-    await supabase.from("creators").update({ stage: 'negotiating', last_contact: new Date().toISOString() }).eq("id", creatorId);
-    await fetchCreators();
-    setToastMsg("Approved for Negotiating");
-    setPushing(false);
-  };
-
-  const handleNotApproved = async (creatorId: number, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setPushing(true);
-    await supabase.from("creators").update({ stage: 'holding' }).eq("id", creatorId);
-    await fetchCreators();
-    setToastMsg("Moved to Holding");
+    setToastMsg("Re-activated → Bids to score");
     setPushing(false);
   };
 
@@ -346,15 +318,6 @@ export function Creators() {
     setPushing(false);
   };
 
-  const handleReActivate = async (creatorId: number, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setPushing(true);
-    await supabase.from("creators").update({ stage: 'has_bid' }).eq("id", creatorId);
-    await fetchCreators();
-    setToastMsg("Re-activated");
-    setPushing(false);
-  };
-
   const handleLogContact = async (creatorId: number) => {
     const now = new Date().toISOString();
     await supabase.from("creators").update({ last_contact: now }).eq("id", creatorId);
@@ -364,13 +327,15 @@ export function Creators() {
 
   const STAGE_DISPLAY: Record<string, string> = {
     new: 'New',
-    has_bid: 'Has bid',
-    scoring: 'Scoring',
+    has_bid: 'Bids to score',
     negotiating: 'Negotiating',
     final_bid_set: 'Final bid set',
     pending_approval: 'Pending approval',
-    holding: 'Holding',
+    waitlisted: 'Waitlisted',
+    not_qualified: 'Not qualified',
   };
+
+  const finalBidValid = scoringData.finalBidValue.trim() !== "" && parseFloat(scoringData.finalBidValue) > 0;
 
   if (!activeCampaign) {
     return (
@@ -410,9 +375,7 @@ export function Creators() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl mb-2">Pipeline</h1>
-          <p className="text-sm text-muted-foreground">
-            Manage bids, scoring and negotiation
-          </p>
+          <p className="text-sm text-muted-foreground">Manage bids, scoring and negotiation</p>
         </div>
         <div className="flex gap-2" />
       </div>
@@ -421,11 +384,11 @@ export function Creators() {
       <div className="space-y-2">
         <div className="grid grid-cols-5 gap-3">
           {[
-            { label: "New", count: counts.new },
-            { label: "Creators with bids", count: counts.hasBid },
-            { label: "Scoring", count: counts.scoring },
-            { label: "Negotiating", count: counts.negotiating },
+            { label: "New",           count: counts.new },
+            { label: "Bids to score", count: counts.bidsToScore },
+            { label: "Negotiating",   count: counts.negotiating },
             { label: "Final bid set", count: counts.finalBidSet },
+            { label: "Silent 48h+",   count: counts.silent },
           ].map(stat => (
             <div key={stat.label} className="bg-white rounded-lg border border-border p-3 text-center">
               <div className="text-xl mb-0.5">{stat.count}</div>
@@ -433,7 +396,13 @@ export function Creators() {
             </div>
           ))}
         </div>
-        <div className="text-xs text-muted-foreground text-right">Lifetime: {allCreators.length}</div>
+        <div className="flex items-center justify-between text-xs text-muted-foreground">
+          <div className="flex gap-4">
+            <span>Waitlisted: {counts.waitlisted}</span>
+            <span>Not qualified: {counts.notQualified}</span>
+          </div>
+          <span>Lifetime: {allCreators.length}</span>
+        </div>
       </div>
 
       <div className="space-y-4">
@@ -463,13 +432,13 @@ export function Creators() {
 
         <div className="flex gap-2 flex-wrap">
           {([
-            { key: 'all',         label: 'All' },
-            { key: 'hasBid',      label: 'Creators with bids' },
-            { key: 'scoring',     label: 'Scoring' },
-            { key: 'negotiating', label: 'Negotiating' },
-            { key: 'finalBidSet', label: 'Final bid set' },
-            { key: 'holding',     label: 'Holding' },
-            { key: 'silent',      label: 'Silent 48h+' },
+            { key: 'all',          label: 'All' },
+            { key: 'bidsToScore',  label: 'Bids to score' },
+            { key: 'negotiating',  label: 'Negotiating' },
+            { key: 'finalBidSet',  label: 'Final bid set' },
+            { key: 'waitlisted',   label: 'Waitlisted' },
+            { key: 'notQualified', label: 'Not qualified' },
+            { key: 'silent',       label: 'Silent 48h+' },
           ] as { key: ActiveTab; label: string }[]).map(({ key, label }) => (
             <button
               key={key}
@@ -525,7 +494,7 @@ export function Creators() {
                           <TableCell key={col} className="max-w-[220px]">
                             <div className="flex items-center gap-2">
                               <span className="truncate" title={creator.name}>{creator.name}</span>
-                              {col === "Creator" && activeTab === 'finalBidSet' && creator.pushedForApproval && (
+                              {activeTab === 'finalBidSet' && creator.pushedForApproval && (
                                 <span className="shrink-0 px-1.5 py-0.5 rounded-full text-xs bg-[#038B97]/10 text-[#038B97] border border-[#038B97]/20 whitespace-nowrap">
                                   Pushed ✓
                                 </span>
@@ -581,12 +550,6 @@ export function Creators() {
                           </TableCell>
                         );
                       }
-                      if (col === "Content quality") {
-                        return <TableCell key={col} className="text-sm">{creator.contentQuality || "—"}</TableCell>;
-                      }
-                      if (col === "Brief alignment") {
-                        return <TableCell key={col} className="text-sm">{creator.briefAlignment || "—"}</TableCell>;
-                      }
                       if (col === "Final bid") {
                         return (
                           <TableCell key={col} className="text-sm">
@@ -602,48 +565,17 @@ export function Creators() {
                       }
                       return null;
                     })}
-                    {/* Per-tab action buttons */}
+                    {/* Per-tab action */}
                     <TableCell onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center gap-2">
-                        {activeTab === 'hasBid' && (
-                          <>
-                            <Button
-                              size="sm"
-                              disabled={pushing}
-                              style={{ backgroundColor: "#038B97" }}
-                              onClick={(e) => handlePassToScoring(creator.id, e)}
-                            >
-                              Pass to scoring
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              disabled={pushing}
-                              onClick={(e) => handleWaitlist(creator.id, e)}
-                            >
-                              Waitlist
-                            </Button>
-                          </>
-                        )}
-                        {activeTab === 'scoring' && (
-                          <>
-                            <Button
-                              size="sm"
-                              disabled={pushing}
-                              style={{ backgroundColor: "#038B97" }}
-                              onClick={(e) => handleApproveForNegotiating(creator.id, e)}
-                            >
-                              Approve for negotiating
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              disabled={pushing}
-                              onClick={(e) => handleNotApproved(creator.id, e)}
-                            >
-                              Not approved
-                            </Button>
-                          </>
+                        {activeTab === 'bidsToScore' && (
+                          <Button
+                            size="sm"
+                            style={{ backgroundColor: "#038B97" }}
+                            onClick={(e) => openScoringPanel(creator, e)}
+                          >
+                            Score
+                          </Button>
                         )}
                         {activeTab === 'negotiating' && (
                           <Button
@@ -665,7 +597,7 @@ export function Creators() {
                             {creator.pushedForApproval ? "Pushed ✓" : "Push for Lead approval"}
                           </Button>
                         )}
-                        {activeTab === 'holding' && (
+                        {(activeTab === 'waitlisted' || activeTab === 'notQualified') && (
                           <Button
                             size="sm"
                             disabled={pushing}
@@ -720,20 +652,14 @@ export function Creators() {
                           )}
                           <div className="flex gap-3">
                             <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                openScoringPanel(creator, e);
-                              }}
+                              onClick={(e) => { e.stopPropagation(); openScoringPanel(creator, e); }}
                               className="text-sm text-[#038B97] hover:underline"
                             >
                               Edit scoring →
                             </button>
                             {creator.stage === "negotiating" && (
                               <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleLogContact(creator.id);
-                                }}
+                                onClick={(e) => { e.stopPropagation(); handleLogContact(creator.id); }}
                                 className="text-sm text-[#038B97] hover:underline"
                               >
                                 Log contact →
@@ -759,23 +685,13 @@ export function Creators() {
 
       {totalPages > 1 && (
         <div className="flex items-center justify-between px-1">
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={page === 0}
-            onClick={() => setPage(p => p - 1)}
-          >
+          <Button variant="outline" size="sm" disabled={page === 0} onClick={() => setPage(p => p - 1)}>
             Prev
           </Button>
           <span className="text-sm text-muted-foreground">
             Page {page + 1} of {totalPages} · showing {visibleCreators.length} of {list.length}
           </span>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={page >= totalPages - 1}
-            onClick={() => setPage(p => p + 1)}
-          >
+          <Button variant="outline" size="sm" disabled={page >= totalPages - 1} onClick={() => setPage(p => p + 1)}>
             Next
           </Button>
         </div>
@@ -797,10 +713,7 @@ export function Creators() {
       {/* Scoring Side Panel */}
       {scoringPanelOpen && scoringCreator && (
         <>
-          <div
-            className="fixed inset-0 bg-black/50 z-40"
-            onClick={closeScoringPanel}
-          />
+          <div className="fixed inset-0 bg-black/50 z-40" onClick={closeScoringPanel} />
           <div className="fixed inset-y-0 right-0 w-[500px] bg-white border-l border-border shadow-2xl z-50 flex flex-col">
             <div className="p-6 border-b border-border flex items-center justify-between">
               <div>
@@ -821,9 +734,7 @@ export function Creators() {
                   value={scoringData.contentQuality}
                   onValueChange={(v) => setScoringData({ ...scoringData, contentQuality: v })}
                 >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select quality" />
-                  </SelectTrigger>
+                  <SelectTrigger><SelectValue placeholder="Select quality" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="Raw">Raw — first brand deal, unproven format</SelectItem>
                     <SelectItem value="Emerging">Emerging — some brand experience, inconsistent delivery</SelectItem>
@@ -840,9 +751,7 @@ export function Creators() {
                   value={scoringData.briefAlignment}
                   onValueChange={(v) => setScoringData({ ...scoringData, briefAlignment: v })}
                 >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select alignment" />
-                  </SelectTrigger>
+                  <SelectTrigger><SelectValue placeholder="Select alignment" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="Off-brief">Off-brief</SelectItem>
                     <SelectItem value="Partially aligned">Partially aligned</SelectItem>
@@ -858,9 +767,7 @@ export function Creators() {
                   value={scoringData.audienceOverlap}
                   onValueChange={(v) => setScoringData({ ...scoringData, audienceOverlap: v })}
                 >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select overlap" />
-                  </SelectTrigger>
+                  <SelectTrigger><SelectValue placeholder="Select overlap" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="Weak overlap">Weak overlap</SelectItem>
                     <SelectItem value="Moderate overlap">Moderate overlap</SelectItem>
@@ -903,9 +810,7 @@ export function Creators() {
                   value={scoringData.formatFit}
                   onValueChange={(v) => setScoringData({ ...scoringData, formatFit: v })}
                 >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select format" />
-                  </SelectTrigger>
+                  <SelectTrigger><SelectValue placeholder="Select format" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="Reel">Reel</SelectItem>
                     <SelectItem value="Static">Static</SelectItem>
@@ -920,21 +825,13 @@ export function Creators() {
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => setScoringData({ ...scoringData, pastBrandDeal: false })}
-                    className={`px-4 py-2 rounded border ${
-                      !scoringData.pastBrandDeal
-                        ? "bg-[#038B97] text-white border-[#038B97]"
-                        : "bg-white border-border"
-                    }`}
+                    className={`px-4 py-2 rounded border ${!scoringData.pastBrandDeal ? "bg-[#038B97] text-white border-[#038B97]" : "bg-white border-border"}`}
                   >
                     No
                   </button>
                   <button
                     onClick={() => setScoringData({ ...scoringData, pastBrandDeal: true })}
-                    className={`px-4 py-2 rounded border ${
-                      scoringData.pastBrandDeal
-                        ? "bg-[#038B97] text-white border-[#038B97]"
-                        : "bg-white border-border"
-                    }`}
+                    className={`px-4 py-2 rounded border ${scoringData.pastBrandDeal ? "bg-[#038B97] text-white border-[#038B97]" : "bg-white border-border"}`}
                   >
                     Yes
                   </button>
@@ -954,7 +851,7 @@ export function Creators() {
 
               <div className="space-y-2">
                 <Label>Recommended bid range</Label>
-                <p className="text-xs text-muted-foreground">System range: $300–$400 · based on follower count, niche, and format</p>
+                <p className="text-xs text-muted-foreground">System range based on follower count, niche, and format</p>
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <Label className="text-xs text-muted-foreground">Low</Label>
@@ -988,6 +885,21 @@ export function Creators() {
                 </div>
               </div>
 
+              {/* Final bid field */}
+              <div className="space-y-2">
+                <Label>Final bid</Label>
+                <p className="text-xs text-muted-foreground">Pre-filled with creator's offer. Required for "Approve as final bid".</p>
+                <Input
+                  type="number"
+                  value={scoringData.finalBidValue}
+                  onChange={(e) => setScoringData({ ...scoringData, finalBidValue: e.target.value })}
+                  placeholder="Enter final bid amount"
+                />
+                {!finalBidValid && (
+                  <p className="text-xs text-muted-foreground">Enter a final bid to approve.</p>
+                )}
+              </div>
+
               <div className="space-y-2">
                 <Label>Risk flag</Label>
                 {scoringCreator && getAutoDetectedFlags(scoringCreator).length > 0 && (
@@ -995,10 +907,7 @@ export function Creators() {
                     <div className="text-xs text-muted-foreground">Auto-detected:</div>
                     <div className="flex flex-wrap gap-2">
                       {getAutoDetectedFlags(scoringCreator).map((flag) => (
-                        <div
-                          key={flag}
-                          className="px-2 py-1 rounded text-xs bg-red-100 text-red-700 border border-red-200 flex items-center gap-1"
-                        >
+                        <div key={flag} className="px-2 py-1 rounded text-xs bg-red-100 text-red-700 border border-red-200 flex items-center gap-1">
                           {flag}
                           <button
                             onClick={() => setDismissedAutoFlags([...dismissedAutoFlags, flag])}
@@ -1015,9 +924,7 @@ export function Creators() {
                   value={scoringData.riskFlag}
                   onValueChange={(v) => setScoringData({ ...scoringData, riskFlag: v })}
                 >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select risk flag" />
-                  </SelectTrigger>
+                  <SelectTrigger><SelectValue placeholder="Select risk flag" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="None">None</SelectItem>
                     <SelectItem value="Late history">Late history</SelectItem>
@@ -1041,16 +948,41 @@ export function Creators() {
               </div>
             </div>
 
-            <div className="p-6 border-t border-border flex gap-2">
-              <Button variant="outline" className="flex-1" onClick={closeScoringPanel}>
+            {/* Footer — outcome buttons only, no plain Save */}
+            <div className="p-4 border-t border-border space-y-2">
+              <div className="grid grid-cols-2 gap-2">
+                <Button
+                  variant="outline"
+                  disabled={pushing}
+                  onClick={() => handleOutcome('waitlisted')}
+                >
+                  Waitlist
+                </Button>
+                <Button
+                  variant="outline"
+                  disabled={pushing}
+                  onClick={() => handleOutcome('not_qualified')}
+                >
+                  Not qualified
+                </Button>
+                <Button
+                  disabled={pushing}
+                  style={{ backgroundColor: "#038B97" }}
+                  onClick={() => handleOutcome('negotiating', { last_contact: new Date().toISOString() })}
+                >
+                  Approve for negotiating
+                </Button>
+                <Button
+                  disabled={pushing || !finalBidValid}
+                  style={finalBidValid ? { backgroundColor: "#038B97" } : {}}
+                  variant={finalBidValid ? "default" : "secondary"}
+                  onClick={() => handleOutcome('final_bid_set', { final_bid: parseFloat(scoringData.finalBidValue) })}
+                >
+                  Approve as final bid
+                </Button>
+              </div>
+              <Button variant="outline" className="w-full" onClick={closeScoringPanel}>
                 Cancel
-              </Button>
-              <Button
-                className="flex-1"
-                style={{ backgroundColor: "#038B97" }}
-                onClick={saveScoringData}
-              >
-                Save
               </Button>
             </div>
           </div>
