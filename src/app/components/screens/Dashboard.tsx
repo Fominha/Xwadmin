@@ -6,6 +6,7 @@ import { fetchSheetData } from "../../lib/mockApi";
 import { getCurrentUser } from "../../lib/auth";
 import { AlertCircle, Clock, CheckCircle2 } from "lucide-react";
 import { supabase } from "../../lib/supabase";
+import { CampaignSelector } from "../CampaignSelector";
 
 interface DashboardData {
   campaignName: string;
@@ -111,6 +112,7 @@ export function Dashboard() {
 
   return (
     <>
+      <CampaignSelector />
       {/* Sticky campaign header for Ops and Lead */}
       <div className="sticky top-0 z-30 bg-white border-b border-border px-8 py-3">
         <div className="max-w-7xl mx-auto flex items-center justify-between">

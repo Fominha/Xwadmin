@@ -1,11 +1,13 @@
 import { useState, useEffect } from "react";
-import { useNavigate, useSearchParams } from "react-router";
+import { useNavigate } from "react-router";
 import { Upload, ArrowRight, FileSpreadsheet } from "lucide-react";
 import { Button } from "../ui/button";
 import { Progress } from "../ui/progress";
 import { getCurrentUser } from "../../lib/auth";
 import { supabase } from "../../lib/supabase";
 import { fetchLatestExport, normalizeHandle } from "../../lib/sheetsApi";
+import { useCampaign } from "../../lib/CampaignContext";
+import { CampaignSelector } from "../CampaignSelector";
 
 interface RecentImport {
   label: string;
@@ -16,7 +18,7 @@ interface RecentImport {
 
 export function Import() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const { activeCampaign } = useCampaign();
 
   useEffect(() => {
     const user = getCurrentUser();
@@ -31,22 +33,6 @@ export function Import() {
   const [importError, setImportError] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
   const [recentImports, setRecentImports] = useState<RecentImport[]>([]);
-
-  const getActiveCampaignId = async (): Promise<string | null> => {
-    const fromUrl = searchParams.get("campaign");
-    if (fromUrl) return fromUrl;
-    const fromStorage = localStorage.getItem("xw_campaign_id");
-    if (fromStorage) return fromStorage;
-
-    const { data } = await supabase
-      .from("campaigns")
-      .select("id")
-      .eq("status", "Active")
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .single();
-    return data?.id ?? null;
-  };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -69,23 +55,18 @@ export function Import() {
     setImportResult(null);
 
     try {
-      // 1. Resolve campaign
-      const campaignId = await getActiveCampaignId();
-      if (!campaignId) {
-        setImportError("Open a campaign first, then import.");
+      // 1. Resolve campaign from context
+      if (!activeCampaign) {
+        setImportError("Select a campaign first, then import.");
         setImporting(false);
         return;
       }
 
-      // 2. Fetch campaign's sheet_id
-      const { data: campaign, error: campaignError } = await supabase
-        .from("campaigns")
-        .select("sheet_id")
-        .eq("id", campaignId)
-        .single();
+      const campaignId = activeCampaign.id;
+      const campaign = { sheet_id: activeCampaign.sheet_id };
 
-      if (campaignError || !campaign?.sheet_id) {
-        setImportError("Campaign not found or has no linked sheet.");
+      if (!campaign.sheet_id) {
+        setImportError("This campaign has no linked sheet.");
         setImporting(false);
         return;
       }
@@ -170,7 +151,9 @@ export function Import() {
   };
 
   return (
-    <div className="p-8 max-w-7xl mx-auto space-y-6">
+    <div>
+      <CampaignSelector />
+      <div className="p-8 max-w-7xl mx-auto space-y-6">
       <div>
         <h1 className="text-2xl mb-2">Import Creators</h1>
         <p className="text-sm text-muted-foreground">
@@ -227,7 +210,7 @@ export function Import() {
             </p>
             <Button
               onClick={handleSheetImport}
-              disabled={importing}
+              disabled={importing || !activeCampaign}
               style={{ backgroundColor: "#038B97" }}
               className="flex items-center gap-2"
             >
@@ -292,6 +275,7 @@ export function Import() {
             ))
           )}
         </div>
+      </div>
       </div>
     </div>
   );

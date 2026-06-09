@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { AlertCircle, ArrowRight } from "lucide-react";
 import { fetchSheetData } from "../../lib/mockApi";
 import { getCurrentUser } from "../../lib/auth";
+import { CampaignSelector } from "../CampaignSelector";
 
 interface BriefData {
   campaignName: string;
@@ -247,7 +248,9 @@ export function Brief() {
 
   // Editable view for Ops
   return (
-    <div className="p-8 max-w-4xl mx-auto space-y-6">
+    <div>
+      <CampaignSelector />
+      <div className="p-8 max-w-4xl mx-auto space-y-6">
       <div>
         <h1 className="text-2xl mb-2">Campaign Brief</h1>
         <p className="text-sm text-muted-foreground">
@@ -481,6 +484,7 @@ export function Brief() {
           </div>
         </>
       )}
+      </div>
     </div>
   );
 }

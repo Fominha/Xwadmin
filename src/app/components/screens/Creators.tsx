@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { useNavigate, useSearchParams } from "react-router";
+import { useNavigate } from "react-router";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { Input } from "../ui/input";
@@ -12,8 +12,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Textarea } from "../ui/textarea";
 import { Label } from "../ui/label";
 import { supabase } from "../../lib/supabase";
+import { useCampaign } from "../../lib/CampaignContext";
+import { CampaignSelector } from "../CampaignSelector";
 
-const stages = ["All", "New bid", "Scoring", "Negotiating", "Final bid set", "Silent 48h+"];
+const STAGE_TABS = ["All", "New bid", "Scoring", "Negotiating", "Final bid set", "Silent 48h+"];
 
 const statusStyles: Record<string, string> = {
   "New bid": "bg-amber-100 text-amber-700 border-amber-200",
@@ -27,13 +29,10 @@ const statusStyles: Record<string, string> = {
 
 export function Creators() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
-  const [campaignId, setCampaignId] = useState<string | null>(
-    searchParams.get("campaign") || localStorage.getItem("xw_campaign_id")
-  );
+  const { activeCampaign } = useCampaign();
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
-  const [activeFilter, setActiveFilter] = useState(searchParams.get("filter") || "All");
+  const [activeFilter, setActiveFilter] = useState("All");
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [selectedCreator, setSelectedCreator] = useState<any>(null);
   const [toastMsg, setToastMsg] = useState("");
@@ -85,31 +84,13 @@ export function Creators() {
   // Fetch creators from Supabase
   const [allCreators, setAllCreators] = useState<any[]>([]);
 
-  const resolveCampaignId = async (): Promise<string | null> => {
-    const fromUrl = searchParams.get("campaign");
-    if (fromUrl) { localStorage.setItem("xw_campaign_id", fromUrl); return fromUrl; }
-    const fromStorage = localStorage.getItem("xw_campaign_id");
-    if (fromStorage) return fromStorage;
-    // Fall back to most recent active campaign
-    const { data } = await supabase
-      .from("campaigns")
-      .select("id")
-      .eq("status", "Active")
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .single();
-    if (data?.id) { localStorage.setItem("xw_campaign_id", data.id); return data.id; }
-    return null;
-  };
-
-  const fetchCreators = async (cid?: string | null) => {
-    const id = cid ?? campaignId;
-    if (!id) { setLoading(false); return; }
+  const fetchCreators = async () => {
+    if (!activeCampaign) { setLoading(false); return; }
     setLoading(true);
     const { data } = await supabase
       .from("creators")
       .select("*")
-      .eq("campaign_id", id)
+      .eq("campaign_id", activeCampaign.id)
       .order("created_at", { ascending: false });
 
     if (data) {
@@ -145,15 +126,8 @@ export function Creators() {
   };
 
   useEffect(() => {
-    resolveCampaignId().then(id => {
-      if (id && id !== campaignId) setCampaignId(id);
-      else fetchCreators(id);
-    });
-  }, []);
-
-  useEffect(() => {
-    if (campaignId) fetchCreators(campaignId);
-  }, [campaignId]);
+    fetchCreators();
+  }, [activeCampaign?.id]);
 
   // Priority sorting order for All tab
   const priorityOrder: Record<string, number> = {
@@ -172,23 +146,24 @@ export function Creators() {
     return aOrder - bOrder;
   });
 
-  // Filter creators
+  // Filter creators by stage tab (using DB status values)
   const filteredCreators = sortedCreators.filter((creator) => {
-    // Filter by stage
-    if (activeFilter === "urgent") {
-      if (creator.status !== "New bid" && creator.status !== "Silent 48h+") {
-        return false;
-      }
+    let stageMatch = true;
+    if (activeFilter === "New bid") {
+      stageMatch = creator.status === "New" && creator.theirAsk > 0;
+    } else if (activeFilter === "Scoring") {
+      stageMatch = creator.status === "Scoring" || creator.status === "Scored";
     } else if (activeFilter === "Negotiating") {
-      // Negotiating tab includes both "Negotiating" and "Counter sent" statuses
-      if (creator.status !== "Negotiating" && creator.status !== "Counter sent") {
-        return false;
-      }
-    } else if (activeFilter !== "All" && creator.status !== activeFilter) {
-      return false;
+      stageMatch = creator.status === "Negotiating" || creator.status === "Counter sent";
+    } else if (activeFilter === "Final bid set") {
+      stageMatch = creator.status === "Final bid set";
+    } else if (activeFilter === "Silent 48h+") {
+      stageMatch = creator.status === "Silent 48h+" || creator.daysSilent >= 2;
     }
+    // "All" matches everything
 
-    // Filter by search query
+    if (!stageMatch) return false;
+
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
       return (
@@ -196,13 +171,12 @@ export function Creators() {
         creator.handle.toLowerCase().includes(query)
       );
     }
-
     return true;
   });
 
   const creators = filteredCreators;
 
-  const silentCreatorsCount = allCreators.filter(c => c.status === "Silent 48h+").length;
+  const silentCreatorsCount = allCreators.filter(c => c.status === "Silent 48h+" || c.daysSilent >= 2).length;
   const showUrgencyBanner = silentCreatorsCount > 0 && !urgencyBannerDismissed;
 
   const getRecRange = (ask: number) => calculateRecommendedRange(ask);
@@ -327,7 +301,7 @@ export function Creators() {
       status: "Scored",
       updated_at: new Date().toISOString(),
     }).eq("id", scoringCreator.id);
-    await fetchCreators(campaignId);
+    await fetchCreators();
     setToastMsg("Scoring saved");
     closeScoringPanel();
   };
@@ -345,7 +319,7 @@ export function Creators() {
 
     await supabase.from("client_selections").insert(
       selectedCreators.map(c => ({
-        campaign_id: campaignId,
+        campaign_id: activeCampaign?.id,
         creator_id: c.id,
         handle: c.handle,
         name: c.name,
@@ -356,29 +330,46 @@ export function Creators() {
       }))
     );
 
-    await fetchCreators(campaignId);
+    await fetchCreators();
     setSelectedIds([]);
     setToastMsg(`${selectedCreators.length} creator${selectedCreators.length !== 1 ? "s" : ""} pushed to Fundify`);
     setPushing(false);
   };
 
-  // Empty state check
-  if (!loading && creators.length === 0) {
+  // Ledger counts
+  const ledger = {
+    newBid: allCreators.filter(c => c.status === "New" && c.theirAsk > 0).length,
+    scoringNeeded: allCreators.filter(c => c.status === "New" && (!c.theirAsk || c.theirAsk === 0)).length,
+    negotiating: allCreators.filter(c => c.status === "Negotiating" || c.status === "Counter sent").length,
+    finalBidSet: allCreators.filter(c => c.status === "Final bid set").length,
+    silent: silentCreatorsCount,
+  };
+
+  if (!activeCampaign) {
     return (
-      <div className="p-8 max-w-7xl mx-auto">
-        <div>
-          <h1 className="text-2xl mb-2">Pipeline</h1>
-          <p className="text-sm text-muted-foreground">
-            Manage bids, scoring and negotiation
-          </p>
-        </div>
-        <div className="flex items-center justify-center min-h-[400px]">
-          <div className="text-center">
-            <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mx-auto mb-4">
-              <Search className="w-8 h-8 text-muted-foreground" />
+      <div>
+        <CampaignSelector />
+      </div>
+    );
+  }
+
+  if (!loading && allCreators.length === 0) {
+    return (
+      <div>
+        <CampaignSelector onCampaignChange={fetchCreators} />
+        <div className="p-8 max-w-7xl mx-auto">
+          <div>
+            <h1 className="text-2xl mb-2">Pipeline</h1>
+            <p className="text-sm text-muted-foreground">Manage bids, scoring and negotiation</p>
+          </div>
+          <div className="flex items-center justify-center min-h-[400px]">
+            <div className="text-center">
+              <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mx-auto mb-4">
+                <Search className="w-8 h-8 text-muted-foreground" />
+              </div>
+              <h3 className="text-lg mb-2">No creators yet</h3>
+              <p className="text-sm text-muted-foreground">Import creators to get started</p>
             </div>
-            <h3 className="text-lg mb-2">No bids received yet</h3>
-            <p className="text-sm text-muted-foreground">Import creators to get started</p>
           </div>
         </div>
       </div>
@@ -386,7 +377,9 @@ export function Creators() {
   }
 
   return (
-    <div className="p-8 max-w-7xl mx-auto space-y-6">
+    <div>
+      <CampaignSelector onCampaignChange={fetchCreators} />
+      <div className="p-8 max-w-7xl mx-auto space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl mb-2">Pipeline</h1>
@@ -415,6 +408,22 @@ export function Creators() {
         </div>
       </div>
 
+      {/* Stage ledger */}
+      <div className="grid grid-cols-5 gap-3">
+        {[
+          { label: "New bid", count: ledger.newBid },
+          { label: "Scoring needed", count: ledger.scoringNeeded },
+          { label: "Negotiating", count: ledger.negotiating },
+          { label: "Final bid set", count: ledger.finalBidSet },
+          { label: "Silent 48h+", count: ledger.silent },
+        ].map(stat => (
+          <div key={stat.label} className="bg-white rounded-lg border border-border p-3 text-center">
+            <div className="text-xl mb-0.5">{stat.count}</div>
+            <div className="text-xs text-muted-foreground">{stat.label}</div>
+          </div>
+        ))}
+      </div>
+
       <div className="space-y-4">
         <Input
           placeholder="Search by name or handle…"
@@ -441,7 +450,7 @@ export function Creators() {
         )}
 
         <div className="flex gap-2 flex-wrap">
-          {stages.map((stage) => (
+          {STAGE_TABS.map((stage) => (
             <button
               key={stage}
               onClick={() => setActiveFilter(stage)}
@@ -948,6 +957,7 @@ export function Creators() {
           </div>
         </>
       )}
+      </div>
     </div>
   );
 }

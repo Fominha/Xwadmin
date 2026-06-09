@@ -8,6 +8,7 @@ import { Textarea } from "../ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { EmptyState } from "../EmptyState";
 import { supabase } from "../../lib/supabase";
+import { useCampaign } from "../../lib/CampaignContext";
 
 interface Campaign {
   id: string;
@@ -50,6 +51,7 @@ function SkeletonCard() {
 
 export function Campaigns() {
   const navigate = useNavigate();
+  const { setActiveCampaign } = useCampaign();
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
@@ -196,9 +198,8 @@ export function Campaigns() {
                 className="mt-auto w-full"
                 style={{ borderColor: "#038B97", color: "#038B97" }}
                 onClick={() => {
-                  localStorage.setItem("xw_campaign_id", c.id);
-                  localStorage.setItem("xw_sheet_id", c.sheet_id);
-                  navigate(`/pipeline?campaign=${c.id}`);
+                  setActiveCampaign({ id: c.id, name: c.name, client_name: c.client_name, sheet_id: c.sheet_id });
+                  navigate("/pipeline");
                 }}
               >
                 Open Pipeline →

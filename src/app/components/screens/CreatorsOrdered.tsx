@@ -5,6 +5,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from ".
 import { getCurrentUser } from "../../lib/auth";
 import { Lock, Copy } from "lucide-react";
 import { supabase } from "../../lib/supabase";
+import { CampaignSelector } from "../CampaignSelector";
 
 interface ActivationPipeline {
   notified: { complete: boolean; date?: string };
@@ -167,7 +168,9 @@ export function CreatorsOrdered() {
   const complete = activations.filter(a => a.pipeline.posted.complete).length;
 
   return (
-    <div className="p-8 max-w-7xl mx-auto space-y-6">
+    <div>
+      <CampaignSelector />
+      <div className="p-8 max-w-7xl mx-auto space-y-6">
       <div>
         <h1 className="text-2xl mb-2">Activations</h1>
         <p className="text-sm text-muted-foreground">
@@ -470,6 +473,7 @@ export function CreatorsOrdered() {
           <p className="text-muted-foreground">No activations yet.</p>
         </div>
       )}
+      </div>
     </div>
   );
 }

@@ -1,8 +1,11 @@
-import { useEffect } from "react";
-import { RouterProvider, useNavigate } from "react-router";
+import { RouterProvider } from "react-router";
 import { router } from "./routes";
-import { getCurrentUser } from "./lib/auth";
+import { CampaignProvider } from "./lib/CampaignContext";
 
 export default function App() {
-  return <RouterProvider router={router} />;
+  return (
+    <CampaignProvider>
+      <RouterProvider router={router} />
+    </CampaignProvider>
+  );
 }
