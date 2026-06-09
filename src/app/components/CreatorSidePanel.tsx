@@ -9,7 +9,8 @@ import {
   TIER_LABELS,
   CONTENT_MATCH_LABELS,
   AUDIENCE_FIT_LABELS,
-  calculateRecommendedRange,
+  getRecommendedRange,
+  parseFollowers,
 } from "../lib/scoring";
 import { supabase } from "../lib/supabase";
 
@@ -38,7 +39,7 @@ export function CreatorSidePanel({ creator, onClose }: CreatorSidePanelProps) {
   });
 
   const allScoresSet = scores.productionTier > 0 && scores.contentMatch > 0 && scores.audienceFit > 0 && scores.whyXWRecommends.trim().length > 0;
-  const recRange = calculateRecommendedRange(creator.theirAsk);
+  const recRangeResult = getRecommendedRange(creator.theirAsk, parseFollowers(creator.followers ?? ""));
 
   return (
     <>
@@ -295,7 +296,14 @@ export function CreatorSidePanel({ creator, onClose }: CreatorSidePanelProps) {
               </div>
               <div>
                 <div className="text-muted-foreground mb-1">Recommended range</div>
-                <div className="text-lg text-[#038B97]">{recRange}</div>
+                {recRangeResult ? (
+                  <div>
+                    <div className="text-lg text-[#038B97]">${recRangeResult.low} – ${recRangeResult.high}</div>
+                    <div className="text-xs text-muted-foreground mt-0.5">{recRangeResult.tier} · floor ${recRangeResult.floor}</div>
+                  </div>
+                ) : (
+                  <div className="text-lg text-muted-foreground">—</div>
+                )}
               </div>
             </div>
 
@@ -307,6 +315,9 @@ export function CreatorSidePanel({ creator, onClose }: CreatorSidePanelProps) {
                 onChange={(e) => setNegotiation({ ...negotiation, counterOffer: e.target.value })}
                 placeholder="Enter amount"
               />
+              {recRangeResult && negotiation.counterOffer && parseFloat(negotiation.counterOffer) < recRangeResult.floor && (
+                <p className="text-xs text-amber-600">Below tier floor — you can still set this bid</p>
+              )}
             </div>
 
             <div className="space-y-2">

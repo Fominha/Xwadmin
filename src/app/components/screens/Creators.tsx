@@ -6,7 +6,7 @@ import { Input } from "../ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
 import { Search, X } from "lucide-react";
 import { CreatorSidePanel } from "../CreatorSidePanel";
-import { calculateRecommendedRange, TIER_SHORT } from "../../lib/scoring";
+import { calculateRecommendedRange, getRecommendedRange, parseFollowers, TIER_SHORT } from "../../lib/scoring";
 import { getCurrentUser } from "../../lib/auth";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Textarea } from "../ui/textarea";
@@ -235,8 +235,7 @@ export function Creators() {
     e.stopPropagation();
     setScoringCreator(creator);
     setScoringPanelOpen(true);
-    const range = calculateRecommendedRange(creator.theirAsk);
-    const [low, high] = range.replace(/\$/g, "").split("–");
+    const range = getRecommendedRange(creator.theirAsk, parseFollowers(creator.followers));
     setScoringData({
       contentQuality: "",
       briefAlignment: "",
@@ -245,8 +244,8 @@ export function Creators() {
       formatFit: "",
       pastBrandDeal: false,
       estimatedViews: "",
-      recRangeLow: low,
-      recRangeHigh: high,
+      recRangeLow: range ? String(range.low) : "",
+      recRangeHigh: range ? String(range.high) : "",
       riskFlag: "",
       notes: "",
     });
@@ -511,13 +510,21 @@ export function Creators() {
                         return <TableCell key={col}>${creator.theirAsk}</TableCell>;
                       }
                       if (col === "Rec. Range") {
+                        const range = getRecommendedRange(creator.theirAsk, parseFollowers(creator.followers));
                         return (
-                          <TableCell key={col} className="text-[#038B97]">
-                            {creator.recRange || (activeFilter === "All" ? (
-                              <span className="px-2 py-1 rounded-full text-xs border bg-muted text-muted-foreground border-border">
-                                Score needed
-                              </span>
-                            ) : "—")}
+                          <TableCell key={col}>
+                            {range === null ? (
+                              <span className="text-muted-foreground">—</span>
+                            ) : (
+                              <div className="space-y-1">
+                                <span className="text-[#038B97]">${range.low} – ${range.high}</span>
+                                {range.belowFloor && (
+                                  <span className="block text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200 w-fit">
+                                    Below {range.tier} floor (${range.floor})
+                                  </span>
+                                )}
+                              </div>
+                            )}
                           </TableCell>
                         );
                       }
@@ -885,7 +892,10 @@ export function Creators() {
                 <Label>NEG tier</Label>
                 <p className="text-xs text-muted-foreground">System recommended range based on brief formula</p>
                 <div className="text-sm text-muted-foreground p-2 bg-muted rounded">
-                  {scoringCreator ? calculateRecommendedRange(scoringCreator.theirAsk) : "—"}
+                  {scoringCreator ? (() => {
+                    const r = getRecommendedRange(scoringCreator.theirAsk, parseFollowers(scoringCreator.followers));
+                    return r ? `$${r.low} – $${r.high}` : "—";
+                  })() : "—"}
                 </div>
               </div>
 

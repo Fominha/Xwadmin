@@ -54,7 +54,7 @@ export function getTierLabel(tier: number): string {
   return TIER_LABELS[tier];
 }
 
-// NEG_TIERS formula - Calculate recommended range
+// NEG_TIERS formula - Calculate recommended range (legacy string version)
 export function calculateRecommendedRange(ask: number): string {
   let minPercent: number;
   let maxPercent: number;
@@ -83,4 +83,52 @@ export function calculateRecommendedRange(ask: number): string {
   const max = Math.round((ask * maxPercent) / 100 / 50) * 50;
 
   return `$${min}–$${max}`;
+}
+
+export function parseFollowers(raw: string): number {
+  if (!raw) return 0;
+  const s = raw.trim().toUpperCase().replace(/,/g, "");
+  if (s.endsWith("M")) return Math.round(parseFloat(s) * 1_000_000);
+  if (s.endsWith("K")) return Math.round(parseFloat(s) * 1_000);
+  return parseInt(s) || 0;
+}
+
+export function getTier(followers: number): { tier: string; floor: number } {
+  if (followers >= 500_000) return { tier: "Mega", floor: 10000 };
+  if (followers >= 100_000) return { tier: "Mid-Tier", floor: 2500 };
+  if (followers >= 10_000) return { tier: "Micro", floor: 500 };
+  return { tier: "Nano", floor: 100 };
+}
+
+export function getRecommendedRange(
+  ask: number,
+  followers: number
+): { low: number; high: number; tier: string; floor: number; belowFloor: boolean } | null {
+  if (!ask || ask <= 0) return null;
+
+  let minPercent: number;
+  let maxPercent: number;
+
+  if (ask <= 500) {
+    minPercent = 60; maxPercent = 80;
+  } else if (ask <= 800) {
+    minPercent = 50; maxPercent = 60;
+  } else if (ask <= 1500) {
+    minPercent = 40; maxPercent = 60;
+  } else if (ask <= 3000) {
+    minPercent = 40; maxPercent = 50;
+  } else if (ask <= 7000) {
+    minPercent = 30; maxPercent = 50;
+  } else {
+    minPercent = 25; maxPercent = 40;
+  }
+
+  let low = Math.round((ask * minPercent) / 100 / 50) * 50;
+  const high = Math.round((ask * maxPercent) / 100 / 50) * 50;
+
+  const { tier, floor } = getTier(followers);
+  const belowFloor = ask < floor;
+  low = Math.max(low, floor);
+
+  return { low, high, tier, floor, belowFloor };
 }

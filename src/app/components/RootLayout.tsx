@@ -3,6 +3,7 @@ import { Menu, X, Home, FileText, Upload, Users, CheckCircle, ShoppingCart, Sett
 import { useState, useEffect } from "react";
 import { getCurrentUser, logout } from "../lib/auth";
 import { supabase } from "../lib/supabase";
+import { useCampaign } from "../lib/CampaignContext";
 
 export function RootLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(
@@ -10,6 +11,7 @@ export function RootLayout() {
   );
   const location = useLocation();
   const navigate = useNavigate();
+  const { activeCampaign } = useCampaign();
   const [user, setUser] = useState(getCurrentUser());
   const [approvalsBadgeCount, setApprovalsBadgeCount] = useState(2);
   const [ordersBadgeCount, setOrdersBadgeCount] = useState(0);
@@ -62,21 +64,21 @@ export function RootLayout() {
   };
 
   const opsNavItems = [
-    { path: "/", label: "Campaigns", icon: Layers, count: 0 },
-    { path: "/dashboard", label: "Dashboard", icon: Home, count: 0 },
-    { path: "/brief", label: "Brief", icon: FileText, count: 0 },
-    { path: "/import", label: "Import", icon: Upload, count: 0 },
-    { path: "/pipeline", label: "Pipeline", icon: Users, count: 0 },
-    { path: "/activations", label: "Activations", icon: ShoppingCart, count: 0 },
-    { path: "/settings", label: "Settings", icon: Settings, count: 0 },
+    { path: "/", label: "Campaigns", icon: Layers, count: 0, requiresCampaign: false },
+    { path: "/dashboard", label: "Dashboard", icon: Home, count: 0, requiresCampaign: false },
+    { path: "/brief", label: "Brief", icon: FileText, count: 0, requiresCampaign: true },
+    { path: "/import", label: "Import", icon: Upload, count: 0, requiresCampaign: true },
+    { path: "/pipeline", label: "Pipeline", icon: Users, count: 0, requiresCampaign: true },
+    { path: "/activations", label: "Activations", icon: ShoppingCart, count: 0, requiresCampaign: true },
+    { path: "/settings", label: "Settings", icon: Settings, count: 0, requiresCampaign: false },
   ];
 
   const leadNavItems = [
-    { path: "/dashboard", label: "Dashboard", icon: Home, count: 0 },
-    { path: "/approvals", label: "Approvals", icon: CheckCircle, count: approvalsBadgeCount },
-    { path: "/orders", label: "Orders", icon: ShoppingCart, count: ordersBadgeCount },
-    { path: "/brief", label: "Brief", icon: FileText, count: 0 },
-    { path: "/settings", label: "Settings", icon: Settings, count: 0 },
+    { path: "/dashboard", label: "Dashboard", icon: Home, count: 0, requiresCampaign: false },
+    { path: "/approvals", label: "Approvals", icon: CheckCircle, count: approvalsBadgeCount, requiresCampaign: false },
+    { path: "/orders", label: "Orders", icon: ShoppingCart, count: ordersBadgeCount, requiresCampaign: false },
+    { path: "/brief", label: "Brief", icon: FileText, count: 0, requiresCampaign: false },
+    { path: "/settings", label: "Settings", icon: Settings, count: 0, requiresCampaign: false },
   ];
 
   const navItems = user?.role === "ops" ? opsNavItems : leadNavItems;
@@ -128,10 +130,12 @@ export function RootLayout() {
               ? location.pathname === "/" || location.pathname === "/campaigns"
               : location.pathname === item.path;
             const Icon = item.icon;
+            const needsCampaign = (item as any).requiresCampaign;
+            const effectivePath = needsCampaign && !activeCampaign ? "/campaigns" : item.path;
             return (
               <NavLink
                 key={item.path}
-                to={item.path}
+                to={effectivePath}
                 className={`flex items-center justify-between px-3 py-2 rounded-lg transition-colors ${
                   isActive
                     ? "border-l-4 border-[#038B97] bg-[#038B97]/5 text-[#038B97]"
