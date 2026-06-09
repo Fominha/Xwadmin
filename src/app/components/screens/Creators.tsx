@@ -6,7 +6,7 @@ import { Input } from "../ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
 import { Search, X } from "lucide-react";
 import { CreatorSidePanel } from "../CreatorSidePanel";
-import { calculateRecommendedRange, getRecommendedRange, parseFollowers, getPipelineBucket, TIER_SHORT } from "../../lib/scoring";
+import { calculateRecommendedRange, getRecommendedRange, parseFollowers, getPipelineBucket, isSilent48h, PipelineBucket, TIER_SHORT } from "../../lib/scoring";
 import { getCurrentUser } from "../../lib/auth";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Textarea } from "../ui/textarea";
@@ -58,6 +58,7 @@ export function Creators() {
   const [urgencyBannerDismissed, setUrgencyBannerDismissed] = useState(false);
   const [expandedCreatorId, setExpandedCreatorId] = useState<number | null>(null);
   const [page, setPage] = useState(0);
+  const [bulkSkipped, setBulkSkipped] = useState(0);
 
   useEffect(() => {
     const user = getCurrentUser();
@@ -124,7 +125,12 @@ export function Creators() {
         finalBidAmount: r.final_bid ?? 0,
         finalBid: r.final_bid ? `$${r.final_bid}` : "",
         status: r.status ?? "New",
-        lastContact: r.updated_at ? new Date(r.updated_at).toLocaleDateString() : "—",
+        last_contact: r.last_contact ?? null,
+        lastContact: r.last_contact
+          ? new Date(r.last_contact).toLocaleDateString()
+          : r.updated_at
+            ? new Date(r.updated_at).toLocaleDateString()
+            : "—",
         contentQuality: r.content_match ?? "",
         briefAlignment: r.content_match ?? "",
         audienceOverlap: r.audience_fit ?? "",
@@ -146,32 +152,34 @@ export function Creators() {
     fetchCreators();
   }, [activeCampaign?.id]);
 
-  // Bucket counters — single source of truth via getPipelineBucket
-  const silentCreatorsCount = allCreators.filter(c => c.status === "Silent 48h+" || c.daysSilent >= 2).length;
-  const counts = { new: 0, scoring: 0, negotiating: 0, finalBidSet: 0, silent: 0 };
-  for (const c of allCreators) counts[getPipelineBucket(c)]++;
-  counts.silent = silentCreatorsCount;
+  // Bucket counters — single source of truth via getPipelineBucket / isSilent48h
+  const counts = { all: 0, new: 0, scoring: 0, negotiating: 0, finalBidSet: 0, silent: 0 };
+  for (const c of allCreators) {
+    counts.all++;
+    counts[getPipelineBucket(c)]++;
+    if (isSilent48h(c)) counts.silent++;
+  }
 
+  const silentCreatorsCount = counts.silent;
   const showUrgencyBanner = silentCreatorsCount > 0 && !urgencyBannerDismissed;
 
-  // Tab → bucket mapping
-  const bucketForTab: Record<string, string> = {
-    "New": "new",
-    "Scoring": "scoring",
-    "Negotiating": "negotiating",
-    "Final bid set": "finalBidSet",
-  };
-
-  // Filter by active tab using getPipelineBucket (Silent keeps its own logic)
+  // Filter by active tab using getPipelineBucket / isSilent48h
   const searchFiltered = allCreators.filter(creator => {
     if (!searchQuery) return true;
     const query = searchQuery.toLowerCase();
     return creator.name.toLowerCase().includes(query) || creator.handle.toLowerCase().includes(query);
   });
 
+  const bucketForTab: Record<string, PipelineBucket> = {
+    "New": "new",
+    "Scoring": "scoring",
+    "Negotiating": "negotiating",
+    "Final bid set": "finalBidSet",
+  };
+
   const tabFiltered = searchFiltered.filter(creator => {
     if (activeFilter === "All") return true;
-    if (activeFilter === "Silent 48h+") return creator.status === "Silent 48h+" || creator.daysSilent >= 2;
+    if (activeFilter === "Silent 48h+") return isSilent48h(creator);
     const bucket = bucketForTab[activeFilter];
     return bucket ? getPipelineBucket(creator) === bucket : true;
   });
@@ -307,43 +315,57 @@ export function Creators() {
     closeScoringPanel();
   };
 
-  const handlePushToFundify = async () => {
-    const selectedCreators = allCreators.filter(c => selectedIds.includes(c.id));
-    const unscored = selectedCreators.filter(c => c.content_match === null && c.production_tier === null);
-    if (unscored.length > 0) return;
-
+  const handlePushToNegotiating = async () => {
+    if (selectedIds.length === 0) return;
     setPushing(true);
-    await supabase.from("creators").update({
-      status: "Pushed",
-      pushed_at: new Date().toISOString(),
-    }).in("id", selectedIds);
-
-    await supabase.from("client_selections").insert(
-      selectedCreators.map(c => ({
-        campaign_id: activeCampaign?.id,
-        creator_id: c.id,
-        handle: c.handle,
-        name: c.name,
-        execution_price: c.theirAsk,
-        production_tier: c.production_tier,
-        decision: "Pending",
-        pushed_at: new Date().toISOString(),
-      }))
-    );
-
+    const now = new Date().toISOString();
+    await supabase.from("creators").update({ status: "Negotiating", last_contact: now }).in("id", selectedIds);
     await fetchCreators();
     setSelectedIds([]);
-    setToastMsg(`${selectedCreators.length} creator${selectedCreators.length !== 1 ? "s" : ""} pushed to Fundify`);
+    setToastMsg(`${selectedIds.length} moved to Negotiating`);
     setPushing(false);
   };
 
-  // Ledger derived from bucket counts
+  const handleMoveToFinalBidSet = async () => {
+    if (selectedIds.length === 0) return;
+    setPushing(true);
+    const selected = allCreators.filter(c => selectedIds.includes(c.id));
+    const eligible = selected.filter(c => c.finalBidAmount > 0);
+    const skipped = selected.length - eligible.length;
+    if (eligible.length > 0) {
+      await supabase.from("creators").update({ status: "FinalBidSet" }).in("id", eligible.map(c => c.id));
+    }
+    await fetchCreators();
+    setSelectedIds([]);
+    setBulkSkipped(skipped);
+    setToastMsg(skipped > 0 ? `${eligible.length} moved · ${skipped} skipped (no final bid)` : `${eligible.length} moved to Final bid set`);
+    setPushing(false);
+  };
+
+  const handlePushForApproval = async () => {
+    if (selectedIds.length === 0) return;
+    setPushing(true);
+    await supabase.from("creators").update({ status: "PendingApproval" }).in("id", selectedIds);
+    await fetchCreators();
+    setSelectedIds([]);
+    setToastMsg(`${selectedIds.length} pushed for Lead approval`);
+    setPushing(false);
+  };
+
+  const handleLogContact = async (creatorId: number) => {
+    const now = new Date().toISOString();
+    await supabase.from("creators").update({ last_contact: now }).eq("id", creatorId);
+    await fetchCreators();
+    setToastMsg("Contact logged");
+  };
+
   const ledger = {
     newBid: counts.new,
     scoringNeeded: counts.scoring,
     negotiating: counts.negotiating,
     finalBidSet: counts.finalBidSet,
     silent: counts.silent,
+    all: counts.all,
   };
 
   if (!activeCampaign) {
@@ -388,41 +410,26 @@ export function Creators() {
             Manage bids, scoring and negotiation
           </p>
         </div>
-        <div className="flex gap-2">
-          {activeFilter === "Silent 48h+" && (
-            <Button
-              disabled={selectedIds.length === 0}
-              variant="outline"
-              style={selectedIds.length > 0 ? { borderColor: "#038B97", color: "#038B97" } : {}}
-            >
-              Send follow-up ({selectedIds.length})
-            </Button>
-          )}
-          {activeFilter === "Final bid set" && (
-            <Button
-              disabled={selectedIds.length === 0}
-              style={selectedIds.length > 0 ? { backgroundColor: "#038B97" } : {}}
-            >
-              Mark final bid ({selectedIds.length})
-            </Button>
-          )}
-        </div>
+        <div className="flex gap-2" />
       </div>
 
       {/* Stage ledger */}
-      <div className="grid grid-cols-5 gap-3">
-        {[
-          { label: "New", count: ledger.newBid },
-          { label: "Scoring needed", count: ledger.scoringNeeded },
-          { label: "Negotiating", count: ledger.negotiating },
-          { label: "Final bid set", count: ledger.finalBidSet },
-          { label: "Silent 48h+", count: ledger.silent },
-        ].map(stat => (
-          <div key={stat.label} className="bg-white rounded-lg border border-border p-3 text-center">
-            <div className="text-xl mb-0.5">{stat.count}</div>
-            <div className="text-xs text-muted-foreground">{stat.label}</div>
-          </div>
-        ))}
+      <div className="space-y-2">
+        <div className="grid grid-cols-5 gap-3">
+          {[
+            { label: "New", count: ledger.newBid },
+            { label: "Scoring needed", count: ledger.scoringNeeded },
+            { label: "Negotiating", count: ledger.negotiating },
+            { label: "Final bid set", count: ledger.finalBidSet },
+            { label: "Silent 48h+", count: ledger.silent },
+          ].map(stat => (
+            <div key={stat.label} className="bg-white rounded-lg border border-border p-3 text-center">
+              <div className="text-xl mb-0.5">{stat.count}</div>
+              <div className="text-xs text-muted-foreground">{stat.label}</div>
+            </div>
+          ))}
+        </div>
+        <div className="text-xs text-muted-foreground text-right">Lifetime: {ledger.all}</div>
       </div>
 
       <div className="space-y-4">
@@ -648,6 +655,17 @@ export function Creators() {
                             >
                               Edit scoring →
                             </button>
+                            {creator.status === "Negotiating" && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleLogContact(creator.id);
+                                }}
+                                className="text-sm text-[#038B97] hover:underline"
+                              >
+                                Log contact →
+                              </button>
+                            )}
                             <button
                               onClick={(e) => e.stopPropagation()}
                               className="text-sm text-muted-foreground hover:text-foreground hover:underline"
@@ -677,7 +695,7 @@ export function Creators() {
             Prev
           </Button>
           <span className="text-sm text-muted-foreground">
-            Page {page + 1} of {totalPages}
+            Page {page + 1} of {totalPages} · showing {visible.length} of {tabFiltered.length}
           </span>
           <Button
             variant="outline"
@@ -697,31 +715,27 @@ export function Creators() {
         />
       )}
 
-      {/* Batch push action bar */}
-      {selectedIds.length > 0 && (
+      {/* Per-tab bulk action bar */}
+      {selectedIds.length > 0 && (activeFilter === "Scoring" || activeFilter === "Negotiating" || activeFilter === "Final bid set") && (
         <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-border px-8 py-4 flex items-center justify-between z-30">
           <span className="text-sm text-muted-foreground">
             {selectedIds.length} creator{selectedIds.length !== 1 ? "s" : ""} selected
           </span>
-          <div className="relative group">
-            <Button
-              style={
-                allCreators.filter(c => selectedIds.includes(c.id)).every(c => c.content_match !== null || c.production_tier !== null)
-                  ? { backgroundColor: "#038B97" }
-                  : {}
-              }
-              disabled={
-                pushing ||
-                !allCreators.filter(c => selectedIds.includes(c.id)).every(c => c.content_match !== null || c.production_tier !== null)
-              }
-              onClick={handlePushToFundify}
-            >
-              {pushing ? "Pushing..." : `Push to Fundify (${selectedIds.length})`}
-            </Button>
-            {!allCreators.filter(c => selectedIds.includes(c.id)).every(c => c.content_match !== null || c.production_tier !== null) && (
-              <div className="absolute bottom-full right-0 mb-2 px-3 py-1.5 bg-gray-900 text-white text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                All selected creators must be scored first
-              </div>
+          <div className="flex items-center gap-3">
+            {activeFilter === "Scoring" && (
+              <Button disabled={pushing} style={{ backgroundColor: "#038B97" }} onClick={handlePushToNegotiating}>
+                {pushing ? "Moving..." : `Push to Negotiating (${selectedIds.length})`}
+              </Button>
+            )}
+            {activeFilter === "Negotiating" && (
+              <Button disabled={pushing} style={{ backgroundColor: "#038B97" }} onClick={handleMoveToFinalBidSet}>
+                {pushing ? "Moving..." : `Move to Final bid set (${selectedIds.length})`}
+              </Button>
+            )}
+            {activeFilter === "Final bid set" && (
+              <Button disabled={pushing} style={{ backgroundColor: "#038B97" }} onClick={handlePushForApproval}>
+                {pushing ? "Pushing..." : `Push for Lead Approval (${selectedIds.length})`}
+              </Button>
             )}
           </div>
         </div>

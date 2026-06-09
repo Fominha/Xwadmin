@@ -137,7 +137,7 @@ export function getRecommendedRange(
   return { low, high, tier, floor, belowFloor };
 }
 
-export type PipelineBucket = 'new' | 'scoring' | 'negotiating' | 'finalBidSet' | 'silent';
+export type PipelineBucket = 'new' | 'scoring' | 'negotiating' | 'finalBidSet';
 
 export function getPipelineBucket(creator: any): PipelineBucket {
   const ask = Number(creator.theirAsk) || 0;
@@ -145,7 +145,15 @@ export function getPipelineBucket(creator: any): PipelineBucket {
   const status = creator.status;
 
   if (status === 'Negotiating') return 'negotiating';
-  if (finalBid > 0) return 'finalBidSet';
+  if (status === 'FinalBidSet' || finalBid > 0) return 'finalBidSet';
   if (ask > 0) return 'scoring';
   return 'new';
+}
+
+// Silent is an overlay on negotiating — not a separate exclusive bucket.
+export function isSilent48h(creator: any): boolean {
+  if (creator.status !== 'Negotiating') return false;
+  if (!creator.last_contact) return false;
+  const ageMs = Date.now() - new Date(creator.last_contact).getTime();
+  return ageMs > 48 * 60 * 60 * 1000;
 }
