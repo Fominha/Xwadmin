@@ -185,10 +185,11 @@ export function Creators() {
   // 2. search (applied first)
   const q = (searchQuery || '').trim().toLowerCase();
   if (q) {
-    list = list.filter(c =>
-      (c.name || '').toLowerCase().includes(q) ||
-      (c.handle || '').toLowerCase().includes(q)
-    );
+    const words = q.split(/\s+/).filter(Boolean);
+    list = list.filter(c => {
+      const haystack = `${c.name || ''} ${c.handle || ''}`.toLowerCase();
+      return words.every(w => haystack.includes(w));
+    });
   }
 
   // 3. tab filter — explicit chain, no fallback
