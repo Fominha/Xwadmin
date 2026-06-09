@@ -1,5 +1,5 @@
 async function getAccessToken(): Promise<string> {
-  const raw = import.meta.env.GOOGLE_SERVICE_ACCOUNT_KEY
+  const raw = import.meta.env.VITE_GOOGLE_SERVICE_ACCOUNT_KEY
   const key = JSON.parse(raw)
   const now = Math.floor(Date.now() / 1000)
 
