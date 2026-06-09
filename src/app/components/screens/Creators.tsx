@@ -36,6 +36,7 @@ export function Creators() {
 
   const [selectedCreator, setSelectedCreator] = useState<any>(null);
   const [toastMsg, setToastMsg] = useState("");
+  const [toastError, setToastError] = useState(false);
   const [pushing, setPushing] = useState(false);
   const [scoringPanelOpen, setScoringPanelOpen] = useState(false);
   const [scoringCreator, setScoringCreator] = useState<any>(null);
@@ -44,6 +45,7 @@ export function Creators() {
     briefAlignment: "",
     audienceOverlap: "",
     nicheTags: [] as string[],
+    customTagInput: "",
     formatFit: "",
     pastBrandDeal: false,
     estimatedViews: "",
@@ -68,7 +70,7 @@ export function Creators() {
 
   useEffect(() => {
     if (toastMsg) {
-      const t = setTimeout(() => setToastMsg(""), 3000);
+      const t = setTimeout(() => { setToastMsg(""); setToastError(false); }, 3000);
       return () => clearTimeout(t);
     }
   }, [toastMsg]);
@@ -102,7 +104,7 @@ export function Creators() {
       const normalised = data.map((r: any) => ({
         id: r.id,
         name: r.name ?? "",
-        handle: r.handle ?? "",
+        handle: r.handle ?? "",          // raw full URL from sheet
         followers: r.followers
           ? r.followers >= 1000000
             ? `${(r.followers / 1000000).toFixed(1)}M`
@@ -150,11 +152,11 @@ export function Creators() {
   // Counters — bucketed by stage
   const counts = { new: 0, bidsToScore: 0, negotiating: 0, finalBidSet: 0, silent: 0, waitlisted: 0, notQualified: 0 };
   for (const c of allCreators) {
-    if (c.stage === 'new')              counts.new++;
-    else if (c.stage === 'has_bid')     counts.bidsToScore++;
-    else if (c.stage === 'negotiating') counts.negotiating++;
+    if (c.stage === 'new')                counts.new++;
+    else if (c.stage === 'has_bid')       counts.bidsToScore++;
+    else if (c.stage === 'negotiating')   counts.negotiating++;
     else if (c.stage === 'final_bid_set') counts.finalBidSet++;
-    else if (c.stage === 'waitlisted')  counts.waitlisted++;
+    else if (c.stage === 'waitlisted')    counts.waitlisted++;
     else if (c.stage === 'not_qualified') counts.notQualified++;
     if (isSilent48h(c)) counts.silent++;
   }
@@ -162,10 +164,8 @@ export function Creators() {
   const silentCreatorsCount = counts.silent;
   const showUrgencyBanner = silentCreatorsCount > 0 && !urgencyBannerDismissed;
 
-  // 1. start from all creators
   let list = allCreators;
 
-  // 2. search — multi-word: every word must appear somewhere in name or handle
   const q = (searchQuery || '').trim().toLowerCase();
   if (q) {
     const words = q.split(/\s+/).filter(Boolean);
@@ -175,7 +175,6 @@ export function Creators() {
     });
   }
 
-  // 3. tab filter — explicit chain, no fallback
   if (activeTab === 'all') {
     list = list.filter(c => ['new', 'has_bid', 'negotiating', 'final_bid_set'].includes(c.stage));
   } else if (activeTab === 'bidsToScore') {
@@ -192,7 +191,6 @@ export function Creators() {
     list = list.filter(c => isSilent48h(c));
   }
 
-  // 4. pagination
   const PAGE_SIZE = 100;
   const totalPages = Math.max(1, Math.ceil(list.length / PAGE_SIZE));
   const visibleCreators = list.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
@@ -231,6 +229,7 @@ export function Creators() {
       briefAlignment: "",
       audienceOverlap: "",
       nicheTags: [],
+      customTagInput: "",
       formatFit: "",
       pastBrandDeal: false,
       estimatedViews: "",
@@ -252,6 +251,8 @@ export function Creators() {
     return flags.filter(f => !dismissedAutoFlags.includes(f));
   };
 
+  const PRESET_TAGS = ["Fashion", "Beauty", "Skincare", "Hair", "Lifestyle", "Fitness", "Wellness", "Food", "Travel", "Tech", "Gaming", "Parenting", "Pet", "Home", "DIY", "Finance", "Education", "Comedy", "Music", "Sports", "Luxury", "Sustainability", "Other"];
+
   const toggleNicheTag = (tag: string) => {
     setScoringData((prev) => ({
       ...prev,
@@ -259,6 +260,19 @@ export function Creators() {
         ? prev.nicheTags.filter((t) => t !== tag)
         : [...prev.nicheTags, tag],
     }));
+  };
+
+  const addCustomTag = () => {
+    const tag = scoringData.customTagInput.trim();
+    if (tag && !scoringData.nicheTags.includes(tag)) {
+      setScoringData(prev => ({ ...prev, nicheTags: [...prev.nicheTags, tag], customTagInput: "" }));
+    } else {
+      setScoringData(prev => ({ ...prev, customTagInput: "" }));
+    }
+  };
+
+  const removeTag = (tag: string) => {
+    setScoringData(prev => ({ ...prev, nicheTags: prev.nicheTags.filter(t => t !== tag) }));
   };
 
   const closeScoringPanel = () => {
@@ -273,7 +287,6 @@ export function Creators() {
     audience_fit: scoringData.audienceOverlap,
     niche_tags: scoringData.nicheTags,
     production_tier: scoringData.formatFit || null,
-    ask: scoringData.recRangeLow ? parseFloat(scoringData.recRangeLow) : null,
     rec_range: scoringData.recRangeLow && scoringData.recRangeHigh
       ? `$${scoringData.recRangeLow}–$${scoringData.recRangeHigh}`
       : null,
@@ -281,25 +294,45 @@ export function Creators() {
     updated_at: new Date().toISOString(),
   });
 
+  // FIX 4: all required scoring fields must be filled to enable outcome buttons
+  const scoringComplete =
+    scoringData.contentQuality.trim() !== "" &&
+    scoringData.briefAlignment.trim() !== "" &&
+    scoringData.audienceOverlap.trim() !== "" &&
+    scoringData.formatFit.trim() !== "" &&
+    scoringData.estimatedViews.trim() !== "" &&
+    scoringData.recRangeLow.trim() !== "" &&
+    scoringData.recRangeHigh.trim() !== "" &&
+    scoringData.nicheTags.length > 0;
+
+  const finalBidValid = scoringData.finalBidValue.trim() !== "" && parseFloat(scoringData.finalBidValue) > 0;
+
+  // FIX 3 + FIX 6: outcome actions — SDK only, check error before closing
   const handleOutcome = async (stage: string, extra: Record<string, any> = {}) => {
     if (!scoringCreator) return;
     setPushing(true);
-    await supabase.from("creators").update({
-      ...buildScoringPayload(),
-      stage,
-      ...extra,
-    }).eq("id", scoringCreator.id);
+    const { error } = await supabase
+      .from("creators")
+      .update({ ...buildScoringPayload(), stage, ...extra })
+      .eq("id", scoringCreator.id);
+    if (error) {
+      setToastError(true);
+      setToastMsg("Couldn't save — try again");
+      setPushing(false);
+      return;
+    }
     await fetchCreators();
     closeScoringPanel();
     setToastMsg(`Creator moved to ${stage.replace(/_/g, ' ')}`);
     setPushing(false);
   };
 
-  // Per-row stage transitions
+  // Per-row stage transitions — SDK only, check error
   const handleReActivate = async (creatorId: number, e: React.MouseEvent) => {
     e.stopPropagation();
     setPushing(true);
-    await supabase.from("creators").update({ stage: 'has_bid' }).eq("id", creatorId);
+    const { error } = await supabase.from("creators").update({ stage: 'has_bid' }).eq("id", creatorId);
+    if (error) { setToastError(true); setToastMsg("Couldn't save — try again"); setPushing(false); return; }
     await fetchCreators();
     setToastMsg("Re-activated → Bids to score");
     setPushing(false);
@@ -308,11 +341,12 @@ export function Creators() {
   const handlePushForLeadApproval = async (creatorId: number, e: React.MouseEvent) => {
     e.stopPropagation();
     setPushing(true);
-    await supabase.from("creators").update({
+    const { error } = await supabase.from("creators").update({
       stage: 'final_bid_set',
       pushed_for_approval: true,
       pushed_at: new Date().toISOString(),
     }).eq("id", creatorId);
+    if (error) { setToastError(true); setToastMsg("Couldn't save — try again"); setPushing(false); return; }
     await fetchCreators();
     setToastMsg("Pushed for Lead approval");
     setPushing(false);
@@ -320,7 +354,8 @@ export function Creators() {
 
   const handleLogContact = async (creatorId: number) => {
     const now = new Date().toISOString();
-    await supabase.from("creators").update({ last_contact: now }).eq("id", creatorId);
+    const { error } = await supabase.from("creators").update({ last_contact: now }).eq("id", creatorId);
+    if (error) { setToastError(true); setToastMsg("Couldn't save — try again"); return; }
     await fetchCreators();
     setToastMsg("Contact logged");
   };
@@ -335,14 +370,8 @@ export function Creators() {
     not_qualified: 'Not qualified',
   };
 
-  const finalBidValid = scoringData.finalBidValue.trim() !== "" && parseFloat(scoringData.finalBidValue) > 0;
-
   if (!activeCampaign) {
-    return (
-      <div>
-        <CampaignSelector />
-      </div>
-    );
+    return <div><CampaignSelector /></div>;
   }
 
   if (!loading && allCreators.length === 0) {
@@ -421,10 +450,7 @@ export function Creators() {
             >
               {silentCreatorsCount} creator{silentCreatorsCount !== 1 ? 's have' : ' has'} gone silent — follow up before they drop.
             </button>
-            <button
-              onClick={() => setUrgencyBannerDismissed(true)}
-              className="p-1 hover:bg-amber-200 rounded"
-            >
+            <button onClick={() => setUrgencyBannerDismissed(true)} className="p-1 hover:bg-amber-200 rounded">
               <X className="w-4 h-4" />
             </button>
           </div>
@@ -506,11 +532,13 @@ export function Creators() {
                       if (col === "Handle") {
                         return (
                           <TableCell key={col} onClick={(e) => e.stopPropagation()}>
+                            {/* FIX 2: raw handle field holds full URL */}
                             <a
-                              href={creator.handle.startsWith('http') ? creator.handle : `https://${creator.handle}`}
+                              href={creator.handle?.startsWith('http') ? creator.handle : `https://${creator.handle}`}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="text-[#038B97] hover:underline text-sm"
+                              onClick={(e) => e.stopPropagation()}
                             >
                               {creator.handle || '—'}
                             </a>
@@ -551,11 +579,7 @@ export function Creators() {
                         );
                       }
                       if (col === "Final bid") {
-                        return (
-                          <TableCell key={col} className="text-sm">
-                            {creator.finalBid || "—"}
-                          </TableCell>
-                        );
+                        return <TableCell key={col} className="text-sm">{creator.finalBid || "—"}</TableCell>;
                       }
                       if (col === "Last contact") {
                         return <TableCell key={col} className="text-sm text-muted-foreground">{creator.lastContact}</TableCell>;
@@ -565,24 +589,15 @@ export function Creators() {
                       }
                       return null;
                     })}
-                    {/* Per-tab action */}
                     <TableCell onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center gap-2">
                         {activeTab === 'bidsToScore' && (
-                          <Button
-                            size="sm"
-                            style={{ backgroundColor: "#038B97" }}
-                            onClick={(e) => openScoringPanel(creator, e)}
-                          >
+                          <Button size="sm" style={{ backgroundColor: "#038B97" }} onClick={(e) => openScoringPanel(creator, e)}>
                             Score
                           </Button>
                         )}
                         {activeTab === 'negotiating' && (
-                          <Button
-                            size="sm"
-                            style={{ backgroundColor: "#038B97" }}
-                            onClick={(e) => openScoringPanel(creator, e)}
-                          >
+                          <Button size="sm" style={{ backgroundColor: "#038B97" }} onClick={(e) => openScoringPanel(creator, e)}>
                             Edit deal
                           </Button>
                         )}
@@ -608,11 +623,7 @@ export function Creators() {
                           </Button>
                         )}
                         {(activeTab === 'all' || activeTab === 'silent') && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={(e) => openScoringPanel(creator, e)}
-                          >
+                          <Button size="sm" variant="outline" onClick={(e) => openScoringPanel(creator, e)}>
                             Review
                           </Button>
                         )}
@@ -646,9 +657,7 @@ export function Creators() {
                             </div>
                           )}
                           {creator.opsNotes && (
-                            <div className="text-sm text-muted-foreground italic">
-                              {creator.opsNotes}
-                            </div>
+                            <div className="text-sm text-muted-foreground italic">{creator.opsNotes}</div>
                           )}
                           <div className="flex gap-3">
                             <button
@@ -685,27 +694,20 @@ export function Creators() {
 
       {totalPages > 1 && (
         <div className="flex items-center justify-between px-1">
-          <Button variant="outline" size="sm" disabled={page === 0} onClick={() => setPage(p => p - 1)}>
-            Prev
-          </Button>
+          <Button variant="outline" size="sm" disabled={page === 0} onClick={() => setPage(p => p - 1)}>Prev</Button>
           <span className="text-sm text-muted-foreground">
             Page {page + 1} of {totalPages} · showing {visibleCreators.length} of {list.length}
           </span>
-          <Button variant="outline" size="sm" disabled={page >= totalPages - 1} onClick={() => setPage(p => p + 1)}>
-            Next
-          </Button>
+          <Button variant="outline" size="sm" disabled={page >= totalPages - 1} onClick={() => setPage(p => p + 1)}>Next</Button>
         </div>
       )}
 
       {selectedCreator && (
-        <CreatorSidePanel
-          creator={selectedCreator}
-          onClose={() => setSelectedCreator(null)}
-        />
+        <CreatorSidePanel creator={selectedCreator} onClose={() => setSelectedCreator(null)} />
       )}
 
       {toastMsg && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-gray-900 text-white px-4 py-2 rounded-lg text-sm shadow-lg z-50">
+        <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg text-sm shadow-lg z-50 text-white ${toastError ? "bg-red-600" : "bg-gray-900"}`}>
           {toastMsg}
         </div>
       )}
@@ -729,7 +731,7 @@ export function Creators() {
 
             <div className="flex-1 overflow-y-auto p-6 space-y-6">
               <div className="space-y-2">
-                <Label>Content quality</Label>
+                <Label>Content quality <span className="text-red-500">*</span></Label>
                 <Select
                   value={scoringData.contentQuality}
                   onValueChange={(v) => setScoringData({ ...scoringData, contentQuality: v })}
@@ -746,7 +748,7 @@ export function Creators() {
               </div>
 
               <div className="space-y-2">
-                <Label>Brief alignment</Label>
+                <Label>Brief alignment <span className="text-red-500">*</span></Label>
                 <Select
                   value={scoringData.briefAlignment}
                   onValueChange={(v) => setScoringData({ ...scoringData, briefAlignment: v })}
@@ -762,7 +764,7 @@ export function Creators() {
               </div>
 
               <div className="space-y-2">
-                <Label>Audience overlap</Label>
+                <Label>Audience overlap <span className="text-red-500">*</span></Label>
                 <Select
                   value={scoringData.audienceOverlap}
                   onValueChange={(v) => setScoringData({ ...scoringData, audienceOverlap: v })}
@@ -777,16 +779,40 @@ export function Creators() {
                 </Select>
               </div>
 
+              {/* FIX 5: niche tags with free-text custom entry */}
               <div className="space-y-2">
-                <Label>Niche tags</Label>
+                <Label>Niche tags <span className="text-red-500">*</span></Label>
+                {/* Selected tags (preset + custom) */}
+                {scoringData.nicheTags.length > 0 && (
+                  <div className="flex flex-wrap gap-2 mb-2">
+                    {scoringData.nicheTags.map(tag => (
+                      <span key={tag} className="flex items-center gap-1 px-2 py-1 rounded-full text-xs bg-[#038B97] text-white border border-[#038B97]">
+                        {tag}
+                        <button onClick={() => removeTag(tag)} className="hover:bg-[#027580] rounded-full p-0.5 ml-0.5">
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {/* Custom tag input */}
+                <div className="flex gap-2">
+                  <Input
+                    placeholder="Add custom tag, press Enter…"
+                    value={scoringData.customTagInput}
+                    onChange={(e) => setScoringData(prev => ({ ...prev, customTagInput: e.target.value }))}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addCustomTag(); } }}
+                    className="flex-1"
+                  />
+                </div>
+                {/* Preset tag search */}
                 <Input
-                  placeholder="Search tags..."
+                  placeholder="Search presets..."
                   value={nicheSearchQuery}
                   onChange={(e) => setNicheSearchQuery(e.target.value)}
-                  className="mb-2"
                 />
                 <div className="flex flex-wrap gap-2">
-                  {["Fashion", "Beauty", "Skincare", "Hair", "Lifestyle", "Fitness", "Wellness", "Food", "Travel", "Tech", "Gaming", "Parenting", "Pet", "Home", "DIY", "Finance", "Education", "Comedy", "Music", "Sports", "Luxury", "Sustainability", "Other"]
+                  {PRESET_TAGS
                     .filter((tag) => tag.toLowerCase().includes(nicheSearchQuery.toLowerCase()))
                     .map((tag) => (
                       <button
@@ -805,7 +831,7 @@ export function Creators() {
               </div>
 
               <div className="space-y-2">
-                <Label>Format fit</Label>
+                <Label>Format fit <span className="text-red-500">*</span></Label>
                 <Select
                   value={scoringData.formatFit}
                   onValueChange={(v) => setScoringData({ ...scoringData, formatFit: v })}
@@ -839,7 +865,7 @@ export function Creators() {
               </div>
 
               <div className="space-y-2">
-                <Label>Estimated views</Label>
+                <Label>Estimated views <span className="text-red-500">*</span></Label>
                 <p className="text-xs text-muted-foreground">Suggested: 28,000 views · based on follower count + Reel format</p>
                 <Input
                   type="number"
@@ -850,7 +876,7 @@ export function Creators() {
               </div>
 
               <div className="space-y-2">
-                <Label>Recommended bid range</Label>
+                <Label>Recommended bid range <span className="text-red-500">*</span></Label>
                 <p className="text-xs text-muted-foreground">System range based on follower count, niche, and format</p>
                 <div className="grid grid-cols-2 gap-2">
                   <div>
@@ -937,7 +963,7 @@ export function Creators() {
               <div className="space-y-2">
                 <Label>Ops notes (visible to Lead)</Label>
                 <p className="text-xs text-muted-foreground">
-                  Use this to share context Lead needs to make an approval decision — pricing history, DM conversations, relationship flags.
+                  Pricing history, DM conversations, relationship flags.
                 </p>
                 <Textarea
                   value={scoringData.notes}
@@ -950,32 +976,37 @@ export function Creators() {
 
             {/* Footer — outcome buttons only, no plain Save */}
             <div className="p-4 border-t border-border space-y-2">
+              {/* FIX 4: disabled until scoringComplete */}
+              {!scoringComplete && (
+                <p className="text-xs text-muted-foreground text-center">Complete scoring to enable actions.</p>
+              )}
               <div className="grid grid-cols-2 gap-2">
                 <Button
                   variant="outline"
-                  disabled={pushing}
+                  disabled={pushing || !scoringComplete}
                   onClick={() => handleOutcome('waitlisted')}
                 >
                   Waitlist
                 </Button>
                 <Button
                   variant="outline"
-                  disabled={pushing}
+                  disabled={pushing || !scoringComplete}
                   onClick={() => handleOutcome('not_qualified')}
                 >
                   Not qualified
                 </Button>
                 <Button
-                  disabled={pushing}
-                  style={{ backgroundColor: "#038B97" }}
+                  disabled={pushing || !scoringComplete}
+                  style={scoringComplete ? { backgroundColor: "#038B97" } : {}}
+                  variant={scoringComplete ? "default" : "secondary"}
                   onClick={() => handleOutcome('negotiating', { last_contact: new Date().toISOString() })}
                 >
                   Approve for negotiating
                 </Button>
                 <Button
-                  disabled={pushing || !finalBidValid}
-                  style={finalBidValid ? { backgroundColor: "#038B97" } : {}}
-                  variant={finalBidValid ? "default" : "secondary"}
+                  disabled={pushing || !scoringComplete || !finalBidValid}
+                  style={scoringComplete && finalBidValid ? { backgroundColor: "#038B97" } : {}}
+                  variant={scoringComplete && finalBidValid ? "default" : "secondary"}
                   onClick={() => handleOutcome('final_bid_set', { final_bid: parseFloat(scoringData.finalBidValue) })}
                 >
                   Approve as final bid
