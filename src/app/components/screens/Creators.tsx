@@ -33,7 +33,27 @@ export function Creators() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeFilter, setActiveFilter] = useState("All");
-  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  function toggleOne(id: string) {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAll(visibleCreators: any[]) {
+    setSelectedIds(prev => {
+      const visibleIds = visibleCreators.map((c: any) => String(c.id));
+      const allSelected = visibleIds.length > 0 && visibleIds.every(id => prev.has(id));
+      const next = new Set(prev);
+      if (allSelected) visibleIds.forEach(id => next.delete(id));
+      else visibleIds.forEach(id => next.add(id));
+      return next;
+    });
+  }
   const [selectedCreator, setSelectedCreator] = useState<any>(null);
   const [toastMsg, setToastMsg] = useState("");
   const [pushing, setPushing] = useState(false);
@@ -152,6 +172,9 @@ export function Creators() {
     fetchCreators();
   }, [activeCampaign?.id]);
 
+  // Reset page and clear selection when search changes
+  useEffect(() => { setPage(0); }, [searchQuery]);
+
   // Bucket counters — single source of truth via getPipelineBucket / isSilent48h
   const counts = { all: 0, new: 0, scoring: 0, negotiating: 0, finalBidSet: 0, silent: 0 };
   for (const c of allCreators) {
@@ -163,12 +186,14 @@ export function Creators() {
   const silentCreatorsCount = counts.silent;
   const showUrgencyBanner = silentCreatorsCount > 0 && !urgencyBannerDismissed;
 
-  // Filter by active tab using getPipelineBucket / isSilent48h
-  const searchFiltered = allCreators.filter(creator => {
-    if (!searchQuery) return true;
-    const query = searchQuery.toLowerCase();
-    return creator.name.toLowerCase().includes(query) || creator.handle.toLowerCase().includes(query);
-  });
+  // Search first, then tab filter
+  const q = searchQuery.trim().toLowerCase();
+  const searchFiltered = q
+    ? allCreators.filter(c =>
+        (c.name || '').toLowerCase().includes(q) ||
+        (c.handle || '').toLowerCase().includes(q)
+      )
+    : allCreators;
 
   const bucketForTab: Record<string, PipelineBucket> = {
     "New": "new",
@@ -316,39 +341,43 @@ export function Creators() {
   };
 
   const handlePushToNegotiating = async () => {
-    if (selectedIds.length === 0) return;
+    if (selectedIds.size === 0) return;
     setPushing(true);
     const now = new Date().toISOString();
-    await supabase.from("creators").update({ status: "Negotiating", last_contact: now }).in("id", selectedIds);
+    const ids = Array.from(selectedIds);
+    await supabase.from("creators").update({ status: "Negotiating", last_contact: now }).in("id", ids);
     await fetchCreators();
-    setSelectedIds([]);
-    setToastMsg(`${selectedIds.length} moved to Negotiating`);
+    const count = ids.length;
+    setSelectedIds(new Set());
+    setToastMsg(`${count} moved to Negotiating`);
     setPushing(false);
   };
 
   const handleMoveToFinalBidSet = async () => {
-    if (selectedIds.length === 0) return;
+    if (selectedIds.size === 0) return;
     setPushing(true);
-    const selected = allCreators.filter(c => selectedIds.includes(c.id));
+    const selected = allCreators.filter(c => selectedIds.has(String(c.id)));
     const eligible = selected.filter(c => c.finalBidAmount > 0);
     const skipped = selected.length - eligible.length;
     if (eligible.length > 0) {
       await supabase.from("creators").update({ status: "FinalBidSet" }).in("id", eligible.map(c => c.id));
     }
     await fetchCreators();
-    setSelectedIds([]);
+    setSelectedIds(new Set());
     setBulkSkipped(skipped);
     setToastMsg(skipped > 0 ? `${eligible.length} moved · ${skipped} skipped (no final bid)` : `${eligible.length} moved to Final bid set`);
     setPushing(false);
   };
 
   const handlePushForApproval = async () => {
-    if (selectedIds.length === 0) return;
+    if (selectedIds.size === 0) return;
     setPushing(true);
-    await supabase.from("creators").update({ status: "PendingApproval" }).in("id", selectedIds);
+    const ids = Array.from(selectedIds);
+    await supabase.from("creators").update({ status: "PendingApproval" }).in("id", ids);
     await fetchCreators();
-    setSelectedIds([]);
-    setToastMsg(`${selectedIds.length} pushed for Lead approval`);
+    const count = ids.length;
+    setSelectedIds(new Set());
+    setToastMsg(`${count} pushed for Lead approval`);
     setPushing(false);
   };
 
@@ -461,7 +490,7 @@ export function Creators() {
           {STAGE_TABS.map((stage) => (
             <button
               key={stage}
-              onClick={() => { setActiveFilter(stage); setPage(0); }}
+              onClick={() => { setActiveFilter(stage); setPage(0); setSelectedIds(new Set()); }}
               className={`px-3 py-1.5 rounded-full text-sm border transition-colors ${
                 activeFilter === stage
                   ? "bg-[#038B97] text-white border-[#038B97]"
@@ -479,7 +508,10 @@ export function Creators() {
           <TableHeader>
             <TableRow>
               <TableHead className="w-12">
-                <Checkbox />
+                <Checkbox
+                  checked={visible.length > 0 && visible.every(c => selectedIds.has(String(c.id)))}
+                  onCheckedChange={() => toggleAll(visible)}
+                />
               </TableHead>
               {getColumnsForFilter().map((col) => (
                 <TableHead key={col}>{col}</TableHead>
@@ -503,12 +535,8 @@ export function Creators() {
                   >
                     <TableCell onClick={(e) => e.stopPropagation()}>
                       <Checkbox
-                        checked={selectedIds.includes(creator.id)}
-                        onCheckedChange={(checked) => {
-                          setSelectedIds(prev =>
-                            checked ? [...prev, creator.id] : prev.filter(id => id !== creator.id)
-                          );
-                        }}
+                        checked={selectedIds.has(String(creator.id))}
+                        onCheckedChange={() => toggleOne(String(creator.id))}
                       />
                     </TableCell>
                     {columns.map((col) => {
@@ -716,25 +744,25 @@ export function Creators() {
       )}
 
       {/* Per-tab bulk action bar */}
-      {selectedIds.length > 0 && (activeFilter === "Scoring" || activeFilter === "Negotiating" || activeFilter === "Final bid set") && (
+      {selectedIds.size > 0 && (activeFilter === "Scoring" || activeFilter === "Negotiating" || activeFilter === "Final bid set") && (
         <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-border px-8 py-4 flex items-center justify-between z-30">
           <span className="text-sm text-muted-foreground">
-            {selectedIds.length} creator{selectedIds.length !== 1 ? "s" : ""} selected
+            {selectedIds.size} creator{selectedIds.size !== 1 ? "s" : ""} selected
           </span>
           <div className="flex items-center gap-3">
             {activeFilter === "Scoring" && (
               <Button disabled={pushing} style={{ backgroundColor: "#038B97" }} onClick={handlePushToNegotiating}>
-                {pushing ? "Moving..." : `Push to Negotiating (${selectedIds.length})`}
+                {pushing ? "Moving..." : `Push to Negotiating (${selectedIds.size})`}
               </Button>
             )}
             {activeFilter === "Negotiating" && (
               <Button disabled={pushing} style={{ backgroundColor: "#038B97" }} onClick={handleMoveToFinalBidSet}>
-                {pushing ? "Moving..." : `Move to Final bid set (${selectedIds.length})`}
+                {pushing ? "Moving..." : `Move to Final bid set (${selectedIds.size})`}
               </Button>
             )}
             {activeFilter === "Final bid set" && (
               <Button disabled={pushing} style={{ backgroundColor: "#038B97" }} onClick={handlePushForApproval}>
-                {pushing ? "Pushing..." : `Push for Lead Approval (${selectedIds.length})`}
+                {pushing ? "Pushing..." : `Push for Lead Approval (${selectedIds.size})`}
               </Button>
             )}
           </div>
