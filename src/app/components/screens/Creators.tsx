@@ -121,14 +121,12 @@ export function Creators() {
         last_contact: r.last_contact ?? null,
         lastContact: r.last_contact
           ? new Date(r.last_contact).toLocaleDateString()
-          : r.updated_at
-            ? new Date(r.updated_at).toLocaleDateString()
-            : "—",
-        contentQuality: r.content_match ?? "",
-        briefAlignment: r.content_match ?? "",
-        audienceOverlap: r.audience_fit ?? "",
+          : "—",
+        contentQuality: r.match_strength ?? "",
+        briefAlignment: r.audience_match ?? "",
+        audienceOverlap: r.brief_fit_explanation ?? "",
         recRange: r.rec_range_low && r.rec_range_high ? `$${r.rec_range_low}–$${r.rec_range_high}` : "",
-        daysSilent: r.days_silent ?? 0,
+        daysSilent: 0,
         opsNotes: r.ops_notes ?? "",
         production_tier: r.production_tier ?? null,
         content_match: r.content_match ?? null,
@@ -283,16 +281,16 @@ export function Creators() {
   };
 
   const buildScoringPayload = () => ({
-    content_match: scoringData.contentQuality ? Number(scoringData.contentQuality) : null,
-    audience_fit: scoringData.audienceOverlap ? Number(scoringData.audienceOverlap) : null,
-    audience_match: scoringData.briefAlignment,
+    match_strength: scoringData.contentQuality || null,
+    audience_match: scoringData.briefAlignment || null,
+    brief_fit_explanation: scoringData.audienceOverlap || null,
     category: scoringData.formatFit || null,
     expected_plays: scoringData.estimatedViews || null,
     niche_tags: scoringData.nicheTags,
+    risk_flag: scoringData.riskFlag || null,
     rec_range_low: scoringData.recRangeLow ? Number(scoringData.recRangeLow) : null,
     rec_range_high: scoringData.recRangeHigh ? Number(scoringData.recRangeHigh) : null,
-    ops_notes: scoringData.notes,
-    updated_at: new Date().toISOString(),
+    ops_notes: scoringData.notes || null,
   });
 
   // FIX 4: all required scoring fields must be filled to enable outcome buttons
