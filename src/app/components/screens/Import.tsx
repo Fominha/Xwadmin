@@ -203,8 +203,14 @@ export function Import() {
         .gte("imported_at", startOfDay);
 
       const seq = (todayCount ?? 0) + 1;
-      const campaignName = (activeCampaign.name ?? activeCampaign.client ?? "campaign").toString().replace(/\s+/g, "");
-      const importLabel = `${campaignName}-import-${dateStr}-${seq}`;
+      const rawName = (activeCampaign.client ?? activeCampaign.name ?? "campaign").toString();
+      // Take the part before any separator (— - | :), trim, strip spaces and unsafe chars
+      const slug = rawName
+        .split(/[—\-|:]/)[0]
+        .trim()
+        .replace(/\s+/g, "")
+        .replace(/[^a-zA-Z0-9]/g, "") || "campaign";
+      const importLabel = `${slug}-import-${dateStr}-${seq}`;
 
       const currentUser = getCurrentUser();
 
