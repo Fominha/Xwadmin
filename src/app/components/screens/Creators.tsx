@@ -410,12 +410,14 @@ export function Creators() {
 
       {/* Stage ledger */}
       <div className="space-y-2">
-        <div className="grid grid-cols-5 gap-3">
+        <div className="grid grid-cols-7 gap-3">
           {[
             { label: "New",           count: counts.new },
             { label: "Bids to score", count: counts.bidsToScore },
             { label: "Negotiating",   count: counts.negotiating },
             { label: "Final bid set", count: counts.finalBidSet },
+            { label: "Waitlisted",    count: counts.waitlisted },
+            { label: "Not qualified", count: counts.notQualified },
             { label: "Silent 48h+",   count: counts.silent },
           ].map(stat => (
             <div key={stat.label} className="bg-white rounded-lg border border-border p-3 text-center">
@@ -424,11 +426,7 @@ export function Creators() {
             </div>
           ))}
         </div>
-        <div className="flex items-center justify-between text-xs text-muted-foreground">
-          <div className="flex gap-4">
-            <span>Waitlisted: {counts.waitlisted}</span>
-            <span>Not qualified: {counts.notQualified}</span>
-          </div>
+        <div className="flex items-center justify-end text-xs text-muted-foreground">
           <span>Lifetime: {allCreators.length}</span>
         </div>
       </div>
