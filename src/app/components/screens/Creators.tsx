@@ -128,6 +128,13 @@ export function Creators() {
         recRange: r.rec_range_low && r.rec_range_high ? `$${r.rec_range_low}–$${r.rec_range_high}` : "",
         daysSilent: 0,
         opsNotes: r.ops_notes ?? "",
+        formatFit: r.category ?? "",
+        estimatedViews: r.expected_plays ?? "",
+        recRangeLow: r.rec_range_low != null ? String(r.rec_range_low) : "",
+        recRangeHigh: r.rec_range_high != null ? String(r.rec_range_high) : "",
+        riskFlag: r.risk_flag ?? "",
+        scoredAt: r.scored_at ?? null,
+        reScoredAt: r.re_scored_at ?? null,
         production_tier: r.production_tier ?? null,
         content_match: r.content_match ?? null,
         audience_fit: r.audience_fit ?? null,
@@ -223,19 +230,19 @@ export function Creators() {
     setScoringPanelOpen(true);
     const range = getRecommendedRange(creator.theirAsk, parseFollowers(creator.followers));
     setScoringData({
-      contentQuality: "",
-      briefAlignment: "",
-      audienceOverlap: "",
-      nicheTags: [],
+      contentQuality: creator.contentQuality || "",
+      briefAlignment: creator.briefAlignment || "",
+      audienceOverlap: creator.audienceOverlap || "",
+      nicheTags: Array.isArray(creator.niche_tags) ? creator.niche_tags : [],
       customTagInput: "",
-      formatFit: "",
+      formatFit: creator.formatFit || "",
       pastBrandDeal: false,
-      estimatedViews: "",
-      recRangeLow: range ? String(range.low) : "",
-      recRangeHigh: range ? String(range.high) : "",
-      riskFlag: "",
-      notes: "",
-      finalBidValue: creator.offerAmount ? String(creator.offerAmount) : "",
+      estimatedViews: creator.estimatedViews || "",
+      recRangeLow: creator.recRangeLow || (range ? String(range.low) : ""),
+      recRangeHigh: creator.recRangeHigh || (range ? String(range.high) : ""),
+      riskFlag: creator.riskFlag || "",
+      notes: creator.opsNotes || "",
+      finalBidValue: creator.finalBidAmount ? String(creator.finalBidAmount) : (creator.offerAmount ? String(creator.offerAmount) : ""),
     });
     setDismissedAutoFlags([]);
   };
@@ -291,6 +298,8 @@ export function Creators() {
     rec_range_low: scoringData.recRangeLow ? Number(scoringData.recRangeLow) : null,
     rec_range_high: scoringData.recRangeHigh ? Number(scoringData.recRangeHigh) : null,
     ops_notes: scoringData.notes || null,
+    scored_at: scoringCreator?.scoredAt ?? new Date().toISOString(),
+    re_scored_at: scoringCreator?.scoredAt ? new Date().toISOString() : null,
   });
 
   // FIX 4: all required scoring fields must be filled to enable outcome buttons
@@ -522,6 +531,11 @@ export function Creators() {
                                   Pushed ✓
                                 </span>
                               )}
+                              {creator.scoredAt && activeTab !== 'finalBidSet' && (
+                                <span className="shrink-0 px-1.5 py-0.5 rounded-full text-xs bg-green-100 text-green-700 border border-green-200 whitespace-nowrap" title={`Scored ${new Date(creator.scoredAt).toLocaleDateString()}${creator.reScoredAt ? ` · re-scored ${new Date(creator.reScoredAt).toLocaleDateString()}` : ''}`}>
+                                  Scored ✓
+                                </span>
+                              )}
                             </div>
                           </TableCell>
                         );
@@ -655,6 +669,12 @@ export function Creators() {
                           )}
                           {creator.opsNotes && (
                             <div className="text-sm text-muted-foreground italic">{creator.opsNotes}</div>
+                          )}
+                          {creator.scoredAt && (
+                            <div className="text-xs text-muted-foreground">
+                              Scored {new Date(creator.scoredAt).toLocaleString()}
+                              {creator.reScoredAt && ` · last re-scored ${new Date(creator.reScoredAt).toLocaleString()}`}
+                            </div>
                           )}
                           <div className="flex gap-3">
                             <button
