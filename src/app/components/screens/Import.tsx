@@ -14,6 +14,7 @@ interface RecentImport {
   import_label: string;
   imported_at: string;
   net_new_count: number;
+  updated_count: number;
   duplicates_skipped: number;
   rows_in_file: number;
   imported_by: string | null;
@@ -32,7 +33,7 @@ export function Import() {
 
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
-  const [importResult, setImportResult] = useState<{ newCreators: number; duplicates: number } | null>(null);
+  const [importResult, setImportResult] = useState<{ newCreators: number; updated: number; duplicates: number } | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
   const [recentImports, setRecentImports] = useState<RecentImport[]>([]);
@@ -89,9 +90,8 @@ export function Import() {
 
       const rows = await fetchLatestExport(activeCampaign.sheet_id);
 
-      // Map rows, keeping raw handle in `handle` and computed normalized_handle separately.
-      // Skip rows where normalized_handle is empty.
-      const toUpsert = rows.flatMap(row => {
+      // Build clean sheet rows (skip blank handles)
+      const sheetRows = rows.flatMap(row => {
         const rawHandle = row["Handle"] ?? row["handle"] ?? "";
         const normalizedHandle = normalizeHandle(rawHandle);
         if (!normalizedHandle) return [];
@@ -115,37 +115,77 @@ export function Import() {
           expected_plays: parseInt(row["Exp. Plays"] ?? row["exp_plays"] ?? "0") || null,
           engagement: parseInt(row["Exp. Interactions"] ?? row["exp_interactions"] ?? "0") || null,
           offer: offer,
-          status: "New",
-          created_at: new Date().toISOString(),
         }];
       });
 
-      // Upsert in batches of 1000, accumulate inserted IDs.
+      const validRows = sheetRows.length;
+
+      // Fetch existing creators for this campaign to partition new vs existing
+      const existingMap = new Map<string, { id: string; stage: string; offer: number | null }>();
+      {
+        const PAGE = 1000;
+        let off = 0;
+        while (true) {
+          const { data, error } = await supabase
+            .from("creators")
+            .select("id, normalized_handle, stage, offer")
+            .eq("campaign_id", campaignId)
+            .range(off, off + PAGE - 1);
+          if (error) { setImportError(error.message); return; }
+          if (!data || data.length === 0) break;
+          for (const c of data) existingMap.set(c.normalized_handle, { id: c.id, stage: c.stage, offer: c.offer });
+          if (data.length < PAGE) break;
+          off += PAGE;
+        }
+      }
+
+      // Partition
+      const toInsert: any[] = [];
+      const toUpdate: { id: string; offer: number | null; promote: boolean }[] = [];
+      let skipped = 0;
+
+      for (const r of sheetRows) {
+        const existing = existingMap.get(r.normalized_handle);
+        if (!existing) {
+          toInsert.push({ ...r, status: "New", created_at: new Date().toISOString() });
+        } else if (existing.stage === "new" || existing.stage === "has_bid") {
+          const offerChanged = (existing.offer ?? null) !== (r.offer ?? null);
+          const promote = existing.stage === "new" && r.offer != null && r.offer > 0;
+          if (offerChanged || promote) {
+            toUpdate.push({ id: existing.id, offer: r.offer, promote });
+          } else {
+            skipped++;
+          }
+        } else {
+          // negotiating / final_bid_set / waitlisted / not_qualified — Ops-owned, do not touch
+          skipped++;
+        }
+      }
+
+      // Insert new creators in batches
       const BATCH_SIZE = 1000;
       let totalInserted = 0;
-      let upsertError: string | null = null;
-
-      for (let i = 0; i < toUpsert.length; i += BATCH_SIZE) {
-        const batch = toUpsert.slice(i, i + BATCH_SIZE);
+      for (let i = 0; i < toInsert.length; i += BATCH_SIZE) {
+        const batch = toInsert.slice(i, i + BATCH_SIZE);
         const { data, error } = await supabase
           .from("creators")
           .upsert(batch, { onConflict: "campaign_id,normalized_handle", ignoreDuplicates: true })
           .select("id");
-
-        if (error) {
-          upsertError = error.message;
-          break;
-        }
+        if (error) { setImportError(error.message); return; }
         totalInserted += data?.length ?? 0;
       }
 
-      if (upsertError) {
-        setImportError(upsertError);
-        return;
+      // Update offers for un-worked creators (and promote new->has_bid where applicable)
+      let totalUpdated = 0;
+      for (const u of toUpdate) {
+        const patch: any = { offer: u.offer };
+        if (u.promote) patch.stage = "has_bid";
+        const { error } = await supabase.from("creators").update(patch).eq("id", u.id);
+        if (error) { setImportError(error.message); return; }
+        totalUpdated++;
       }
 
-      const validRows = toUpsert.length;
-      const duplicates = validRows - totalInserted;
+      const duplicates = skipped;
 
       // Generate unique label: {campaignName}-import-{YYYY-MM-DD}-{n}
       const today = new Date();
@@ -175,11 +215,12 @@ export function Import() {
         source: "sheet",
         rows_in_file: validRows,
         net_new_count: totalInserted,
+        updated_count: totalUpdated,
         duplicates_skipped: duplicates,
         imported_by: currentUser?.email ?? currentUser?.name ?? "ops",
       });
 
-      setImportResult({ newCreators: totalInserted, duplicates });
+      setImportResult({ newCreators: totalInserted, updated: totalUpdated, duplicates });
       await fetchRecentImports();
     } catch (err: any) {
       setImportError(err?.message ?? "Import failed — check the sheet connection.");
@@ -271,14 +312,18 @@ export function Import() {
       {importResult && (
         <div className="bg-white rounded-lg border border-border p-6 space-y-4">
           <h3 className="text-lg">Import Complete</h3>
-          <div className="grid grid-cols-2 gap-6">
+          <div className="grid grid-cols-3 gap-6">
             <div>
               <div className="text-3xl text-[#038B97] mb-1">{importResult.newCreators}</div>
               <div className="text-sm text-muted-foreground">New creators added</div>
             </div>
             <div>
+              <div className="text-3xl text-amber-600 mb-1">{importResult.updated}</div>
+              <div className="text-sm text-muted-foreground">Offers updated</div>
+            </div>
+            <div>
               <div className="text-3xl text-muted-foreground mb-1">{importResult.duplicates}</div>
-              <div className="text-sm text-muted-foreground">Duplicates skipped</div>
+              <div className="text-sm text-muted-foreground">Skipped</div>
             </div>
           </div>
         </div>
@@ -306,6 +351,10 @@ export function Import() {
                   <div className="text-right">
                     <div className="text-green-600">{item.net_new_count}</div>
                     <div className="text-xs text-muted-foreground">New</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-amber-600">{item.updated_count ?? 0}</div>
+                    <div className="text-xs text-muted-foreground">Updated</div>
                   </div>
                   <div className="text-right">
                     <div className="text-foreground">{item.rows_in_file}</div>
