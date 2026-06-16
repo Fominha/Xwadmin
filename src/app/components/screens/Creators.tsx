@@ -90,6 +90,7 @@ export function Creators() {
         .select("*")
         .eq("campaign_id", activeCampaign.id)
         .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
         .range(offset, offset + PAGE_SIZE - 1);
 
       if (error || !data || data.length === 0) break;
@@ -98,7 +99,12 @@ export function Creators() {
       offset += PAGE_SIZE;
     }
 
-    const data = allRows;
+    const seen = new Set<string>();
+    const data = allRows.filter((r: any) => {
+      if (seen.has(r.id)) return false;
+      seen.add(r.id);
+      return true;
+    });
 
     if (data) {
       const normalised = data.map((r: any) => ({
