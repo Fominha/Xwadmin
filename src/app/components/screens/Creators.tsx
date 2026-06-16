@@ -122,7 +122,7 @@ export function Creators() {
         lastContact: r.last_contact
           ? new Date(r.last_contact).toLocaleDateString()
           : "—",
-        contentQuality: r.match_strength ?? "",
+        contentQuality: r.why_xw_recommends ?? "",
         briefAlignment: r.audience_match ?? "",
         audienceOverlap: r.brief_fit_explanation ?? "",
         recRange: r.rec_range_low && r.rec_range_high ? `$${r.rec_range_low}–$${r.rec_range_high}` : "",
@@ -281,7 +281,7 @@ export function Creators() {
   };
 
   const buildScoringPayload = () => ({
-    match_strength: scoringData.contentQuality || null,
+    why_xw_recommends: scoringData.contentQuality || null,
     audience_match: scoringData.briefAlignment || null,
     brief_fit_explanation: scoringData.audienceOverlap || null,
     category: scoringData.formatFit || null,
