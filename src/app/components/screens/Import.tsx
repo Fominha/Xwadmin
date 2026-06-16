@@ -10,10 +10,13 @@ import { useCampaign } from "../../lib/CampaignContext";
 import { CampaignSelector } from "../CampaignSelector";
 
 interface RecentImport {
-  label: string;
-  date: string;
-  creatorsAdded: number;
-  duplicatesSkipped: number;
+  id: string;
+  import_label: string;
+  imported_at: string;
+  net_new_count: number;
+  duplicates_skipped: number;
+  rows_in_file: number;
+  imported_by: string | null;
 }
 
 export function Import() {
@@ -33,6 +36,21 @@ export function Import() {
   const [importError, setImportError] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
   const [recentImports, setRecentImports] = useState<RecentImport[]>([]);
+
+  const fetchRecentImports = async () => {
+    if (!activeCampaign) { setRecentImports([]); return; }
+    const { data } = await supabase
+      .from("imports")
+      .select("*")
+      .eq("campaign_id", activeCampaign.id)
+      .order("imported_at", { ascending: false })
+      .limit(10);
+    setRecentImports(data ?? []);
+  };
+
+  useEffect(() => {
+    fetchRecentImports();
+  }, [activeCampaign?.id]);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -70,7 +88,6 @@ export function Import() {
       }
 
       const rows = await fetchLatestExport(activeCampaign.sheet_id);
-      const totalRows = rows.length;
 
       // Map rows, keeping raw handle in `handle` and computed normalized_handle separately.
       // Skip rows where normalized_handle is empty.
@@ -127,21 +144,48 @@ export function Import() {
         return;
       }
 
-      const duplicates = totalRows - totalInserted;
+      const validRows = toUpsert.length;
+      const duplicates = validRows - totalInserted;
+
+      // Generate unique label: {campaignName}-import-{YYYY-MM-DD}-{n}
+      const today = new Date();
+      const yyyy = today.getFullYear();
+      const mm = String(today.getMonth() + 1).padStart(2, "0");
+      const dd = String(today.getDate()).padStart(2, "0");
+      const dateStr = `${yyyy}-${mm}-${dd}`;
+      const startOfDay = new Date(yyyy, today.getMonth(), today.getDate()).toISOString();
+
+      // Count today's imports for this campaign to get the sequence number
+      const { count: todayCount } = await supabase
+        .from("imports")
+        .select("id", { count: "exact", head: true })
+        .eq("campaign_id", campaignId)
+        .gte("imported_at", startOfDay);
+
+      const seq = (todayCount ?? 0) + 1;
+      const campaignName = (activeCampaign.name ?? activeCampaign.client ?? "campaign").toString().replace(/\s+/g, "");
+      const importLabel = `${campaignName}-import-${dateStr}-${seq}`;
+
+      const currentUser = getCurrentUser();
+
+      await supabase.from("imports").insert({
+        campaign_id: campaignId,
+        import_label: importLabel,
+        file_name: "Latest_Export (Google Sheet)",
+        source: "sheet",
+        rows_in_file: validRows,
+        net_new_count: totalInserted,
+        duplicates_skipped: duplicates,
+        imported_by: currentUser?.email ?? currentUser?.name ?? "ops",
+      });
+
       setImportResult({ newCreators: totalInserted, duplicates });
-      addRecentImport(totalInserted, duplicates);
+      await fetchRecentImports();
     } catch (err: any) {
       setImportError(err?.message ?? "Import failed — check the sheet connection.");
     } finally {
       setImporting(false);
     }
-  };
-
-  const addRecentImport = (added: number, skipped: number) => {
-    const now = new Date();
-    const label = `Import ${now.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
-    const date = now.toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
-    setRecentImports(prev => [{ label, date, creatorsAdded: added, duplicatesSkipped: skipped }, ...prev].slice(0, 10));
   };
 
   return (
@@ -247,22 +291,29 @@ export function Import() {
         </div>
         <div className="divide-y divide-border">
           {recentImports.length === 0 ? (
-            <div className="p-4 text-sm text-muted-foreground text-center">No imports this session</div>
+            <div className="p-4 text-sm text-muted-foreground text-center">No imports yet for this campaign</div>
           ) : (
-            recentImports.map((item, idx) => (
-              <div key={idx} className="p-4 flex items-center justify-between">
+            recentImports.map((item) => (
+              <div key={item.id} className="p-4 flex items-center justify-between">
                 <div>
-                  <div className="text-sm mb-1">{item.label}</div>
-                  <div className="text-xs text-muted-foreground">{item.date}</div>
+                  <div className="text-sm mb-1">{item.import_label}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {new Date(item.imported_at).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })}
+                    {item.imported_by ? ` · ${item.imported_by}` : ""}
+                  </div>
                 </div>
                 <div className="flex gap-6 text-sm">
                   <div className="text-right">
-                    <div className="text-green-600">{item.creatorsAdded}</div>
-                    <div className="text-xs text-muted-foreground">Creators added</div>
+                    <div className="text-green-600">{item.net_new_count}</div>
+                    <div className="text-xs text-muted-foreground">New</div>
                   </div>
                   <div className="text-right">
-                    <div className="text-muted-foreground">{item.duplicatesSkipped}</div>
-                    <div className="text-xs text-muted-foreground">Duplicates skipped</div>
+                    <div className="text-foreground">{item.rows_in_file}</div>
+                    <div className="text-xs text-muted-foreground">In file</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-muted-foreground">{item.duplicates_skipped}</div>
+                    <div className="text-xs text-muted-foreground">Skipped</div>
                   </div>
                 </div>
               </div>
