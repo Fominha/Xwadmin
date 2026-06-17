@@ -1,8 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router";
-import { Upload, ArrowRight, FileSpreadsheet } from "lucide-react";
+import { ArrowRight, FileSpreadsheet } from "lucide-react";
 import { Button } from "../ui/button";
-import { Progress } from "../ui/progress";
 import { getCurrentUser } from "../../lib/auth";
 import { supabase } from "../../lib/supabase";
 import { fetchLatestExport, normalizeHandle } from "../../lib/sheetsApi";
@@ -31,8 +30,6 @@ export function Import() {
     }
   }, [navigate]);
 
-  const [uploading, setUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
   const [importResult, setImportResult] = useState<{ newCreators: number; updated: number; duplicates: number } | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
@@ -52,21 +49,6 @@ export function Import() {
   useEffect(() => {
     fetchRecentImports();
   }, [activeCampaign?.id]);
-
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      setUploading(true);
-      let progress = 0;
-      const interval = setInterval(() => {
-        progress += 10;
-        setUploadProgress(progress);
-        if (progress >= 100) {
-          clearInterval(interval);
-          setUploading(false);
-        }
-      }, 200);
-    }
-  };
 
   const handleSheetImport = async () => {
     setImporting(true);
@@ -242,46 +224,12 @@ export function Import() {
       <div>
         <h1 className="text-2xl mb-2">Import Creators</h1>
         <p className="text-sm text-muted-foreground">
-          Upload CSV or import directly from your connected Google Sheet
+          Import creators directly from this campaign's connected Google Sheet
         </p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Card 1 — Upload CSV */}
-        <div className="bg-white rounded-lg border border-border p-6 space-y-4">
-          <div className="flex items-center gap-3 mb-4">
-            <Upload className="w-6 h-6 text-[#038B97]" />
-            <h3 className="text-lg">Upload CSV</h3>
-          </div>
-
-          <label
-            htmlFor="file-upload"
-            className="flex flex-col items-center justify-center bg-white rounded-lg border-2 border-dashed border-border p-8 cursor-pointer hover:border-[#038B97] transition-colors"
-          >
-            <Upload className="w-10 h-10 text-muted-foreground mb-3" />
-            <p className="text-sm mb-1">Drop CSV export from XW App here</p>
-            <p className="text-xs text-muted-foreground">or click to upload</p>
-            <input
-              id="file-upload"
-              type="file"
-              accept=".csv"
-              className="hidden"
-              onChange={handleFileSelect}
-            />
-          </label>
-
-          {uploading && (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between text-sm">
-                <span>Uploading...</span>
-                <span>{uploadProgress}%</span>
-              </div>
-              <Progress value={uploadProgress} className="h-2" />
-            </div>
-          )}
-        </div>
-
-        {/* Card 2 — Import from Sheet */}
+      <div className="grid grid-cols-1 gap-6">
+        {/* Import from Sheet */}
         <div className="bg-white rounded-lg border border-border p-6 space-y-4">
           <div className="flex items-center gap-3 mb-4">
             <FileSpreadsheet className="w-6 h-6 text-[#038B97]" />
