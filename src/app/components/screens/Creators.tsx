@@ -363,6 +363,25 @@ export function Creators() {
       pushed_at: new Date().toISOString(),
     }).eq("id", creatorId);
     if (error) { setToastError(true); setToastMsg("Couldn't save — try again"); setPushing(false); return; }
+
+    // 4b: on the FIRST push for this campaign, flip lifecycle sourcing -> submitted.
+    // Read live status (activeCampaign does NOT carry sourcing_status) and guard so
+    // pushes 2..n never re-stamp submitted_at.
+    if (activeCampaign) {
+      const { data: camp } = await supabase
+        .from("campaigns")
+        .select("sourcing_status")
+        .eq("id", activeCampaign.id)
+        .single();
+      if (camp?.sourcing_status === 'sourcing') {
+        const { error: campErr } = await supabase.from("campaigns").update({
+          sourcing_status: 'submitted',
+          submitted_at: new Date().toISOString(),
+        }).eq("id", activeCampaign.id);
+        if (campErr) { setToastError(true); setToastMsg("Creator pushed, but campaign flip failed"); setPushing(false); return; }
+      }
+    }
+
     await fetchCreators();
     setToastMsg("Pushed for Lead approval");
     setPushing(false);
