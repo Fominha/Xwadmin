@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate } from "react-router";
 import { Button } from "../ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
@@ -49,6 +50,7 @@ export function Approvals() {
   const [levelLegendOpen, setLevelLegendOpen] = useState(false);
   const [sentToClientExpanded, setSentToClientExpanded] = useState(false);
   const [approvedCreators, setApprovedCreators] = useState<ApprovedCreator[]>([]);
+  const [popoverPos, setPopoverPos] = useState<{ top: number; left: number } | null>(null);
 
   useEffect(() => {
     const user = getCurrentUser();
@@ -127,6 +129,7 @@ export function Approvals() {
       const target = e.target as HTMLElement;
       if (passBackPopoverId !== null && !target.closest(".pass-back-popover")) {
         setPassBackPopoverId(null);
+        setPopoverPos(null);
         setPassBackReason("");
         setPassBackError("");
       }
@@ -225,6 +228,10 @@ export function Approvals() {
 
   const handlePassBackClick = (creatorId: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    // open below the button; clamp so the 288px popover stays on-screen
+    const left = Math.min(rect.right - 288, window.innerWidth - 288 - 16);
+    setPopoverPos({ top: rect.bottom + 4, left: Math.max(16, left) });
     setPassBackPopoverId(creatorId);
     setPassBackReason("");
     setPassBackError("");
@@ -233,6 +240,7 @@ export function Approvals() {
   const handleCancelPassBack = (e: React.MouseEvent) => {
     e.stopPropagation();
     setPassBackPopoverId(null);
+    setPopoverPos(null);
     setPassBackReason("");
     setPassBackError("");
   };
@@ -256,6 +264,7 @@ export function Approvals() {
     setToastMessage(`${creator.name} held — ${passBackReason}`);
 
     setPassBackPopoverId(null);
+    setPopoverPos(null);
     setPassBackReason("");
     setPassBackError("");
   };
@@ -376,8 +385,11 @@ export function Approvals() {
                         >
                           Hold
                         </button>
-                        {passBackPopoverId === creator.id && (
-                          <div className="pass-back-popover absolute top-full right-0 mt-1 z-30 bg-white border border-border rounded-lg shadow-lg p-4 w-72">
+                        {passBackPopoverId === creator.id && popoverPos && createPortal(
+                          <div
+                            className="pass-back-popover bg-white border border-border rounded-lg shadow-lg p-4 w-72"
+                            style={{ position: "fixed", top: popoverPos.top, left: popoverPos.left, zIndex: 50 }}
+                          >
                             <div className="space-y-3">
                               <div className="space-y-2">
                                 <label className="text-sm font-medium">Reason for hold</label>
@@ -399,25 +411,16 @@ export function Approvals() {
                                 )}
                               </div>
                               <div className="flex gap-2">
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={handleCancelPassBack}
-                                  className="flex-1"
-                                >
+                                <Button size="sm" variant="outline" onClick={handleCancelPassBack} className="flex-1">
                                   Cancel
                                 </Button>
-                                <Button
-                                  size="sm"
-                                  style={{ backgroundColor: "#038B97" }}
-                                  onClick={(e) => handleConfirmHold(creator, e)}
-                                  className="flex-1"
-                                >
+                                <Button size="sm" style={{ backgroundColor: "#038B97" }} onClick={(e) => handleConfirmHold(creator, e)} className="flex-1">
                                   Confirm hold
                                 </Button>
                               </div>
                             </div>
-                          </div>
+                          </div>,
+                          document.body
                         )}
                       </div>
                     </TableCell>
