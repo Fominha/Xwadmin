@@ -232,12 +232,26 @@ export function Approvals() {
   const handlePassBackClick = (creatorId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    // open below the button; clamp so the 288px popover stays on-screen
     const left = Math.min(rect.right - 288, window.innerWidth - 288 - 16);
     setPopoverPos({ top: rect.bottom + 4, left: Math.max(16, left) });
+    // pre-fill existing reason if this creator is already held (edit mode)
+    const existing = visibleCreators.find((c) => c.id === creatorId);
+    setPassBackReason(existing?.leadHold ? (existing.leadHoldNote ?? "") : "");
     setPassBackPopoverId(creatorId);
-    setPassBackReason("");
     setPassBackError("");
+  };
+
+  const handleUnhold = async (creator: Creator, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const { error } = await supabase
+      .from("creators")
+      .update({ lead_hold: false, lead_hold_note: null })
+      .eq("id", creator.id);
+    if (error) { setToastMessage("Couldn't un-hold — try again"); return; }
+    setVisibleCreators((prev) =>
+      prev.map((c) => c.id === creator.id ? { ...c, leadHold: false, leadHoldNote: "" } : c)
+    );
+    setToastMessage(`${creator.name} un-held — back to pending`);
   };
 
   const handleCancelPassBack = (e: React.MouseEvent) => {
@@ -264,7 +278,7 @@ export function Approvals() {
     setVisibleCreators((prev) =>
       prev.map((c) => c.id === creator.id ? { ...c, leadHold: true, leadHoldNote: passBackReason } : c)
     );
-    setToastMessage(`${creator.name} held — ${passBackReason}`);
+    setToastMessage(`${creator.name} hold ${creator.leadHold ? "updated" : "set"} — ${passBackReason}`);
 
     setPassBackPopoverId(null);
     setPopoverPos(null);
@@ -354,7 +368,7 @@ export function Approvals() {
                           className="ml-2 text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-800"
                           title={creator.leadHoldNote}
                         >
-                          Held
+                          Held{creator.leadHoldNote ? `: ${creator.leadHoldNote}` : ""}
                         </span>
                       )}
                     </TableCell>
@@ -382,12 +396,29 @@ export function Approvals() {
                     </TableCell>
                     <TableCell onClick={(e) => e.stopPropagation()}>
                       <div className="relative inline-block">
-                        <button
-                          className="pass-back-popover text-sm px-3 py-1.5 rounded-md border border-border hover:bg-muted transition-colors"
-                          onClick={(e) => handlePassBackClick(creator.id, e)}
-                        >
-                          Hold
-                        </button>
+                        {creator.leadHold ? (
+                          <div className="flex gap-1.5">
+                            <button
+                              className="pass-back-popover text-sm px-2.5 py-1.5 rounded-md border border-border hover:bg-muted transition-colors"
+                              onClick={(e) => handlePassBackClick(creator.id, e)}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              className="text-sm px-2.5 py-1.5 rounded-md border border-border hover:bg-muted transition-colors"
+                              onClick={(e) => handleUnhold(creator, e)}
+                            >
+                              Un-hold
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            className="pass-back-popover text-sm px-3 py-1.5 rounded-md border border-border hover:bg-muted transition-colors"
+                            onClick={(e) => handlePassBackClick(creator.id, e)}
+                          >
+                            Hold
+                          </button>
+                        )}
                         {passBackPopoverId === creator.id && popoverPos && createPortal(
                           <div
                             className="pass-back-popover bg-white border border-border rounded-lg shadow-lg p-4 w-72"
