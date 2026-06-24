@@ -28,16 +28,13 @@ interface Creator {
   contentQuality?: string;
   briefAlignment?: string;
   audienceOverlap?: string;
+  leadHold?: boolean;
+  leadHoldNote?: string;
 }
 
 interface ApprovedCreator extends Creator {
   approvedDate: string;
   clientStatus: "Pending view" | "Viewed" | "Waitlisted" | "Ordered" | "Passed";
-}
-
-interface PassedBackCreator extends Creator {
-  passBackReason: string;
-  passBackDate: string;
 }
 
 export function Approvals() {
@@ -51,9 +48,7 @@ export function Approvals() {
   const [visibleCreators, setVisibleCreators] = useState<Creator[]>([]);
   const [levelLegendOpen, setLevelLegendOpen] = useState(false);
   const [sentToClientExpanded, setSentToClientExpanded] = useState(false);
-  const [passedBackExpanded, setPassedBackExpanded] = useState(false);
   const [approvedCreators, setApprovedCreators] = useState<ApprovedCreator[]>([]);
-  const [passedBackCreators, setPassedBackCreators] = useState<PassedBackCreator[]>([]);
 
   useEffect(() => {
     const user = getCurrentUser();
@@ -66,15 +61,24 @@ export function Approvals() {
   const realized = 9400;
 
   const fetchPushedCreators = async () => {
-    if (!activeCampaign) { setVisibleCreators([]); return; }
+    if (!activeCampaign) { setVisibleCreators([]); setApprovedCreators([]); return; }
+
     const { data, error } = await supabase
       .from("creators")
       .select("*")
       .eq("campaign_id", activeCampaign.id)
       .eq("pushed_for_approval", true)
       .order("pushed_at", { ascending: false });
-    if (error || !data) { setVisibleCreators([]); return; }
-    const mapped: Creator[] = data.map((r: any) => ({
+    if (error || !data) { setVisibleCreators([]); setApprovedCreators([]); return; }
+
+    const { data: selections } = await supabase
+      .from("client_selections")
+      .select("creator_id, client_status")
+      .eq("campaign_id", activeCampaign.id);
+    const statusByCreator = new Map<string, string>();
+    (selections ?? []).forEach((s: any) => statusByCreator.set(s.creator_id, s.client_status ?? "Pending view"));
+
+    const mapOne = (r: any): Creator => ({
       id: r.id,
       name: r.name ?? "",
       handle: r.handle ?? "",
@@ -92,8 +96,28 @@ export function Approvals() {
       contentQuality: r.why_xw_recommends ?? "",
       briefAlignment: r.audience_match ?? "",
       audienceOverlap: r.brief_fit_explanation ?? "",
-    }));
-    setVisibleCreators(mapped);
+      leadHold: r.lead_hold ?? false,
+      leadHoldNote: r.lead_hold_note ?? "",
+    });
+
+    const pending: Creator[] = [];
+    const sent: ApprovedCreator[] = [];
+    data.forEach((r: any) => {
+      const creator = mapOne(r);
+      if (statusByCreator.has(r.id)) {
+        sent.push({
+          ...creator,
+          approvedDate: new Date().toISOString().split('T')[0],
+          clientStatus: statusByCreator.get(r.id) as ApprovedCreator["clientStatus"],
+        });
+      } else {
+        pending.push(creator);
+      }
+    });
+
+    setVisibleCreators(pending);
+    setApprovedCreators(sent);
+    updateBadgeCount(pending.length);
   };
 
   useEffect(() => { fetchPushedCreators(); }, [activeCampaign?.id]);
@@ -163,7 +187,6 @@ export function Approvals() {
 
   const toggleRow = (id: string) => {
     setExpandedRowId(expandedRowId === id ? null : id);
-    // Close pass back popover when expanding/collapsing row
     setPassBackPopoverId(null);
     setPassBackReason("");
     setPassBackError("");
@@ -186,7 +209,6 @@ export function Approvals() {
       );
     if (error) { setToastMessage("Couldn't approve — try again"); return; }
 
-    setVisibleCreators((prev) => prev.filter((c) => c.id !== creator.id));
     const approvedCreator: ApprovedCreator = {
       ...creator,
       approvedDate: new Date().toISOString().split('T')[0],
@@ -194,7 +216,11 @@ export function Approvals() {
     };
     setApprovedCreators((prev) => [...prev, approvedCreator]);
     setToastMessage(`${creator.name} approved — now visible to client`);
-    updateBadgeCount(visibleCreators.length - 1);
+    setVisibleCreators((prev) => {
+      const next = prev.filter((c) => c.id !== creator.id);
+      updateBadgeCount(next.length);
+      return next;
+    });
   };
 
   const handlePassBackClick = (creatorId: string, e: React.MouseEvent) => {
@@ -211,29 +237,23 @@ export function Approvals() {
     setPassBackError("");
   };
 
-  const handleConfirmPassBack = (creator: Creator, e: React.MouseEvent) => {
+  const handleConfirmHold = async (creator: Creator, e: React.MouseEvent) => {
     e.stopPropagation();
     if (!passBackReason) {
-      setPassBackError("Please select a reason before passing back");
+      setPassBackError("Please select a reason before holding");
       return;
     }
 
-    setVisibleCreators((prev) => prev.filter((c) => c.id !== creator.id));
+    const { error } = await supabase
+      .from("creators")
+      .update({ lead_hold: true, lead_hold_note: passBackReason })
+      .eq("id", creator.id);
+    if (error) { setPassBackError("Couldn't hold — try again"); return; }
 
-    const passedBack: PassedBackCreator = {
-      ...creator,
-      passBackReason: passBackReason,
-      passBackDate: new Date().toISOString().split('T')[0],
-    };
-    setPassedBackCreators((prev) => [...prev, passedBack]);
-
-    setToastMessage(`${creator.name} passed back to Ops — ${passBackReason}`);
-    updateBadgeCount(visibleCreators.length - 1);
-
-    // Store pass back reason for Creators table
-    const passedBackOps = JSON.parse(localStorage.getItem("xw_passed_back_creators") || "[]");
-    passedBackOps.push({ id: creator.id, name: creator.name, reason: passBackReason });
-    localStorage.setItem("xw_passed_back_creators", JSON.stringify(passedBackOps));
+    setVisibleCreators((prev) =>
+      prev.map((c) => c.id === creator.id ? { ...c, leadHold: true, leadHoldNote: passBackReason } : c)
+    );
+    setToastMessage(`${creator.name} held — ${passBackReason}`);
 
     setPassBackPopoverId(null);
     setPassBackReason("");
@@ -295,7 +315,7 @@ export function Approvals() {
               <TableHead>Brief fit</TableHead>
               <TableHead>Audience fit</TableHead>
               <TableHead>GMV impact</TableHead>
-              <TableHead>Pass Back</TableHead>
+              <TableHead>Hold</TableHead>
               <TableHead>Approve</TableHead>
             </TableRow>
           </TableHeader>
@@ -315,7 +335,17 @@ export function Approvals() {
                     className="h-12 cursor-pointer hover:bg-muted/50"
                     onClick={() => toggleRow(creator.id)}
                   >
-                    <TableCell>{creator.name}</TableCell>
+                    <TableCell>
+                      {creator.name}
+                      {creator.leadHold && (
+                        <span
+                          className="ml-2 text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-800"
+                          title={creator.leadHoldNote}
+                        >
+                          Held
+                        </span>
+                      )}
+                    </TableCell>
                     <TableCell className="text-muted-foreground">
                       <a
                         href={`https://instagram.com/${creator.handle.replace("@", "")}`}
@@ -343,13 +373,13 @@ export function Approvals() {
                         className="text-sm text-muted-foreground hover:text-foreground pass-back-popover"
                         onClick={(e) => handlePassBackClick(creator.id, e)}
                       >
-                        Pass back
+                        Hold
                       </button>
                       {passBackPopoverId === creator.id && (
                         <div className="pass-back-popover absolute top-full left-0 mt-1 z-10 bg-white border border-border rounded-lg shadow-lg p-4 w-72">
                           <div className="space-y-3">
                             <div className="space-y-2">
-                              <label className="text-sm font-medium">Reason for passing back</label>
+                              <label className="text-sm font-medium">Reason for hold</label>
                               <Select value={passBackReason} onValueChange={setPassBackReason}>
                                 <SelectTrigger>
                                   <SelectValue placeholder="Select reason" />
@@ -379,10 +409,10 @@ export function Approvals() {
                               <Button
                                 size="sm"
                                 style={{ backgroundColor: "#038B97" }}
-                                onClick={(e) => handleConfirmPassBack(creator, e)}
+                                onClick={(e) => handleConfirmHold(creator, e)}
                                 className="flex-1"
                               >
-                                Confirm pass back
+                                Confirm hold
                               </Button>
                             </div>
                           </div>
@@ -468,50 +498,6 @@ export function Approvals() {
                         {creator.clientStatus}
                       </span>
                     </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </div>
-      )}
-
-      {/* Passed Back Section */}
-      {passedBackCreators.length > 0 && (
-        <div className="bg-white rounded-lg border border-border overflow-hidden">
-          <button
-            onClick={() => setPassedBackExpanded(!passedBackExpanded)}
-            className="w-full p-4 flex items-center justify-between hover:bg-muted/50 transition-colors"
-          >
-            <div className="flex items-center gap-2">
-              {passedBackExpanded ? (
-                <ChevronDown className="w-4 h-4" />
-              ) : (
-                <ChevronRight className="w-4 h-4" />
-              )}
-              <span className="font-medium">Passed back</span>
-              <span className="text-sm text-muted-foreground">({passedBackCreators.length})</span>
-            </div>
-          </button>
-          {passedBackExpanded && (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Creator</TableHead>
-                  <TableHead>Level</TableHead>
-                  <TableHead>Final bid</TableHead>
-                  <TableHead>Pass back reason</TableHead>
-                  <TableHead>Date passed back</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {passedBackCreators.map((creator) => (
-                  <TableRow key={creator.id}>
-                    <TableCell>{creator.name}</TableCell>
-                    <TableCell className="text-sm">{TIER_SHORT[creator.tierNum]}</TableCell>
-                    <TableCell>${creator.finalPrice}</TableCell>
-                    <TableCell className="text-sm">{creator.passBackReason}</TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{creator.passBackDate}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
