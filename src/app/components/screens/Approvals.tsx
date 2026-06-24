@@ -7,7 +7,7 @@ import { getTierLabel, TIER_SHORT, CONTENT_MATCH_SHORT, AUDIENCE_FIT_SHORT } fro
 import { getCurrentUser } from "../../lib/auth";
 import { Toast } from "../Toast";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
-import { Info, ChevronDown, ChevronRight } from "lucide-react";
+import { Info } from "lucide-react";
 import { supabase } from "../../lib/supabase";
 import { useCampaign } from "../../lib/CampaignContext";
 
@@ -48,7 +48,6 @@ export function Approvals() {
   const [toastMessage, setToastMessage] = useState("");
   const [visibleCreators, setVisibleCreators] = useState<Creator[]>([]);
   const [levelLegendOpen, setLevelLegendOpen] = useState(false);
-  const [sentToClientExpanded, setSentToClientExpanded] = useState(false);
   const [approvedCreators, setApprovedCreators] = useState<ApprovedCreator[]>([]);
   const [popoverPos, setPopoverPos] = useState<{ top: number; left: number } | null>(null);
 
@@ -127,11 +126,13 @@ export function Approvals() {
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
-      if (passBackPopoverId !== null && !target.closest(".pass-back-popover")) {
+      const insidePopover = target.closest(".pass-back-popover");
+      const insideSelectDropdown = target.closest("[data-radix-popper-content-wrapper]") || target.closest("[role='listbox']") || target.closest("[role='option']");
+      if (passBackPopoverId !== null && !insidePopover && !insideSelectDropdown) {
         setPassBackPopoverId(null);
-        setPopoverPos(null);
         setPassBackReason("");
         setPassBackError("");
+        setPopoverPos(null);
       }
       if (levelLegendOpen && !target.closest(".level-legend-popover")) {
         setLevelLegendOpen(false);
@@ -462,54 +463,6 @@ export function Approvals() {
           </TableBody>
         </Table>
       </div>
-
-      {/* Sent to Client Section */}
-      {approvedCreators.length > 0 && (
-        <div className="bg-white rounded-lg border border-border overflow-hidden">
-          <button
-            onClick={() => setSentToClientExpanded(!sentToClientExpanded)}
-            className="w-full p-4 flex items-center justify-between hover:bg-muted/50 transition-colors"
-          >
-            <div className="flex items-center gap-2">
-              {sentToClientExpanded ? (
-                <ChevronDown className="w-4 h-4" />
-              ) : (
-                <ChevronRight className="w-4 h-4" />
-              )}
-              <span className="font-medium">Sent to client</span>
-              <span className="text-sm text-muted-foreground">({approvedCreators.length})</span>
-            </div>
-          </button>
-          {sentToClientExpanded && (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Creator</TableHead>
-                  <TableHead>Level</TableHead>
-                  <TableHead>Final bid</TableHead>
-                  <TableHead>Sent date</TableHead>
-                  <TableHead>Client status</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {approvedCreators.map((creator) => (
-                  <TableRow key={creator.id}>
-                    <TableCell>{creator.name}</TableCell>
-                    <TableCell className="text-sm">{TIER_SHORT[creator.tierNum]}</TableCell>
-                    <TableCell>${creator.finalPrice}</TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{creator.approvedDate}</TableCell>
-                    <TableCell>
-                      <span className="px-2 py-1 rounded-full text-xs border bg-amber-100 text-amber-700 border-amber-200">
-                        {creator.clientStatus}
-                      </span>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </div>
-      )}
 
       {toastMessage && (
         <Toast message={toastMessage} onClose={() => setToastMessage("")} />
