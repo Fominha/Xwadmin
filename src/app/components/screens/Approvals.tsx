@@ -45,6 +45,7 @@ export function Approvals() {
   const [passBackPopoverId, setPassBackPopoverId] = useState<string | null>(null);
   const [passBackReason, setPassBackReason] = useState("");
   const [passBackError, setPassBackError] = useState("");
+  const [holdSelectOpen, setHoldSelectOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState("");
   const [visibleCreators, setVisibleCreators] = useState<Creator[]>([]);
   const [levelLegendOpen, setLevelLegendOpen] = useState(false);
@@ -125,9 +126,10 @@ export function Approvals() {
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
+      if (holdSelectOpen) return; // dropdown open — don't close the hold popover
       const target = e.target as HTMLElement;
       const insidePopover = target.closest(".pass-back-popover");
-      const insideSelectDropdown = target.closest("[data-radix-popper-content-wrapper]") || target.closest("[role='listbox']") || target.closest("[role='option']");
+      const insideSelectDropdown = target.closest("[data-slot='select-content']") || target.closest("[data-radix-popper-content-wrapper]") || target.closest("[role='listbox']") || target.closest("[role='option']");
       if (passBackPopoverId !== null && !insidePopover && !insideSelectDropdown) {
         setPassBackPopoverId(null);
         setPassBackReason("");
@@ -143,7 +145,7 @@ export function Approvals() {
       document.addEventListener("click", handleClickOutside);
       return () => document.removeEventListener("click", handleClickOutside);
     }
-  }, [passBackPopoverId, levelLegendOpen]);
+  }, [passBackPopoverId, levelLegendOpen, holdSelectOpen]);
 
   const handleApproveAll = async () => {
     if (!activeCampaign) { setToastMessage("No active campaign — select one first"); return; }
@@ -394,7 +396,7 @@ export function Approvals() {
                             <div className="space-y-3">
                               <div className="space-y-2">
                                 <label className="text-sm font-medium">Reason for hold</label>
-                                <Select value={passBackReason} onValueChange={setPassBackReason}>
+                                <Select value={passBackReason} onValueChange={setPassBackReason} onOpenChange={setHoldSelectOpen}>
                                   <SelectTrigger>
                                     <SelectValue placeholder="Select reason" />
                                   </SelectTrigger>
