@@ -370,13 +370,13 @@ export function Approvals() {
                     </TableCell>
                     <TableCell onClick={(e) => e.stopPropagation()} className="relative">
                       <button
-                        className="text-sm text-muted-foreground hover:text-foreground pass-back-popover"
+                        className="pass-back-popover text-sm px-3 py-1.5 rounded-md border border-border hover:bg-muted transition-colors"
                         onClick={(e) => handlePassBackClick(creator.id, e)}
                       >
                         Hold
                       </button>
                       {passBackPopoverId === creator.id && (
-                        <div className="pass-back-popover absolute top-full left-0 mt-1 z-10 bg-white border border-border rounded-lg shadow-lg p-4 w-72">
+                        <div className="pass-back-popover absolute top-full right-0 mt-1 z-20 bg-white border border-border rounded-lg shadow-lg p-4 w-72">
                           <div className="space-y-3">
                             <div className="space-y-2">
                               <label className="text-sm font-medium">Reason for hold</label>
