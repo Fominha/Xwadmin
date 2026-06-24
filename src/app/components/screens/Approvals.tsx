@@ -7,9 +7,11 @@ import { getCurrentUser } from "../../lib/auth";
 import { Toast } from "../Toast";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Info, ChevronDown, ChevronRight } from "lucide-react";
+import { supabase } from "../../lib/supabase";
+import { useCampaign } from "../../lib/CampaignContext";
 
 interface Creator {
-  id: number;
+  id: string;
   name: string;
   handle: string;
   size: string;
@@ -40,8 +42,9 @@ interface PassedBackCreator extends Creator {
 
 export function Approvals() {
   const navigate = useNavigate();
-  const [expandedRowId, setExpandedRowId] = useState<number | null>(null);
-  const [passBackPopoverId, setPassBackPopoverId] = useState<number | null>(null);
+  const { activeCampaign } = useCampaign();
+  const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
+  const [passBackPopoverId, setPassBackPopoverId] = useState<string | null>(null);
   const [passBackReason, setPassBackReason] = useState("");
   const [passBackError, setPassBackError] = useState("");
   const [toastMessage, setToastMessage] = useState("");
@@ -62,54 +65,38 @@ export function Approvals() {
   const msaBudget = 10000;
   const realized = 9400;
 
-  const initialCreators: Creator[] = [
-    {
-      id: 1,
-      name: "Sarah Johnson",
-      handle: "@sarahjstyle",
-      size: "Mid-tier",
-      tierNum: 4,
-      finalPrice: 420,
-      marketRateHigh: 500,
-      contentMatchNum: 5,
-      audienceFitNum: 4,
-      whyXWRecommends: "Excellent engagement, on-brand aesthetic",
-      briefFitExplanation: "Fashion-lifestyle niche and Reel format match brief exactly",
-      audienceFitExplanation: "18–34 female audience in US matches campaign target consumer",
-      opsNotes: "Strong performer in similar campaigns, reliable delivery timeline",
-      opsName: "Alex Rivera",
-      contentQuality: "Fluent",
-      briefAlignment: "On-brief",
-      audienceOverlap: "Strong overlap",
-    },
-    {
-      id: 2,
-      name: "Emma Davis",
-      handle: "@emmastyle",
-      size: "Mid-tier",
-      tierNum: 5,
-      finalPrice: 520,
-      marketRateHigh: 650,
-      contentMatchNum: 5,
-      audienceFitNum: 5,
-      whyXWRecommends: "Top performer, premium quality content",
-      briefFitExplanation: "Premium aesthetic and storytelling style aligns perfectly with brand voice",
-      audienceFitExplanation: "Core audience demographic overlap at 92%, highest engagement in target age group",
-      opsNotes: "",
-      opsName: "Jordan Lee",
-      contentQuality: "Studio",
-      briefAlignment: "Perfect fit",
-      audienceOverlap: "Ideal match",
-    },
-  ];
+  const fetchPushedCreators = async () => {
+    if (!activeCampaign) { setVisibleCreators([]); return; }
+    const { data, error } = await supabase
+      .from("creators")
+      .select("*")
+      .eq("campaign_id", activeCampaign.id)
+      .eq("pushed_for_approval", true)
+      .order("pushed_at", { ascending: false });
+    if (error || !data) { setVisibleCreators([]); return; }
+    const mapped: Creator[] = data.map((r: any) => ({
+      id: r.id,
+      name: r.name ?? "",
+      handle: r.handle ?? "",
+      size: r.size ?? "—",
+      tierNum: r.production_tier ?? 0,
+      finalPrice: r.final_bid ?? 0,
+      marketRateHigh: r.rec_range_high ?? 0,
+      contentMatchNum: r.content_match ?? 0,
+      audienceFitNum: r.audience_fit ?? 0,
+      whyXWRecommends: r.why_xw_recommends ?? "",
+      briefFitExplanation: r.audience_match ?? "",
+      audienceFitExplanation: r.brief_fit_explanation ?? "",
+      opsNotes: r.ops_notes ?? "",
+      opsName: r.ops_name ?? "",
+      contentQuality: r.why_xw_recommends ?? "",
+      briefAlignment: r.audience_match ?? "",
+      audienceOverlap: r.brief_fit_explanation ?? "",
+    }));
+    setVisibleCreators(mapped);
+  };
 
-  useEffect(() => {
-    setVisibleCreators(initialCreators);
-    // Initialize badge count in localStorage
-    if (!localStorage.getItem("xw_approvals_count")) {
-      localStorage.setItem("xw_approvals_count", initialCreators.length.toString());
-    }
-  }, []);
+  useEffect(() => { fetchPushedCreators(); }, [activeCampaign?.id]);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -162,7 +149,7 @@ export function Approvals() {
 
   const totalPendingValue = visibleCreators.reduce((sum, c) => sum + c.finalPrice, 0);
 
-  const toggleRow = (id: number) => {
+  const toggleRow = (id: string) => {
     setExpandedRowId(expandedRowId === id ? null : id);
     // Close pass back popover when expanding/collapsing row
     setPassBackPopoverId(null);
@@ -190,7 +177,7 @@ export function Approvals() {
     updateBadgeCount(visibleCreators.length - 1);
   };
 
-  const handlePassBackClick = (creatorId: number, e: React.MouseEvent) => {
+  const handlePassBackClick = (creatorId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     setPassBackPopoverId(creatorId);
     setPassBackReason("");
