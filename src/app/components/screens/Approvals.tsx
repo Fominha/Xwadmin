@@ -117,8 +117,20 @@ export function Approvals() {
     }
   }, [passBackPopoverId, levelLegendOpen]);
 
-  const handleApproveAll = () => {
-    const newApproved: ApprovedCreator[] = visibleCreators.map(creator => ({
+  const handleApproveAll = async () => {
+    if (!activeCampaign) { setToastMessage("No active campaign — select one first"); return; }
+    if (visibleCreators.length === 0) return;
+
+    const rows = visibleCreators.map((c) => ({
+      campaign_id: activeCampaign.id,
+      creator_id: c.id,
+    }));
+    const { error } = await supabase
+      .from("client_selections")
+      .upsert(rows, { onConflict: "campaign_id,creator_id" });
+    if (error) { setToastMessage("Couldn't approve all — try again"); return; }
+
+    const newApproved: ApprovedCreator[] = visibleCreators.map((creator) => ({
       ...creator,
       approvedDate: new Date().toISOString().split('T')[0],
       clientStatus: "Pending view",
@@ -162,17 +174,25 @@ export function Approvals() {
     window.dispatchEvent(new Event("storage"));
   };
 
-  const handleApprove = (creator: Creator, e: React.MouseEvent) => {
+  const handleApprove = async (creator: Creator, e: React.MouseEvent) => {
     e.stopPropagation();
-    setVisibleCreators((prev) => prev.filter((c) => c.id !== creator.id));
+    if (!activeCampaign) { setToastMessage("No active campaign — select one first"); return; }
 
+    const { error } = await supabase
+      .from("client_selections")
+      .upsert(
+        { campaign_id: activeCampaign.id, creator_id: creator.id },
+        { onConflict: "campaign_id,creator_id" }
+      );
+    if (error) { setToastMessage("Couldn't approve — try again"); return; }
+
+    setVisibleCreators((prev) => prev.filter((c) => c.id !== creator.id));
     const approvedCreator: ApprovedCreator = {
       ...creator,
       approvedDate: new Date().toISOString().split('T')[0],
       clientStatus: "Pending view",
     };
     setApprovedCreators((prev) => [...prev, approvedCreator]);
-
     setToastMessage(`${creator.name} approved — now visible to client`);
     updateBadgeCount(visibleCreators.length - 1);
   };
