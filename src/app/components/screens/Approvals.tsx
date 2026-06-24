@@ -368,56 +368,58 @@ export function Approvals() {
                       <div className="text-sm text-[#038B97]">+${creator.finalPrice}</div>
                       <div className="text-xs text-muted-foreground">{msaPercentage}% of MSA goal</div>
                     </TableCell>
-                    <TableCell onClick={(e) => e.stopPropagation()} className="relative">
-                      <button
-                        className="pass-back-popover text-sm px-3 py-1.5 rounded-md border border-border hover:bg-muted transition-colors"
-                        onClick={(e) => handlePassBackClick(creator.id, e)}
-                      >
-                        Hold
-                      </button>
-                      {passBackPopoverId === creator.id && (
-                        <div className="pass-back-popover absolute top-full right-0 mt-1 z-20 bg-white border border-border rounded-lg shadow-lg p-4 w-72">
-                          <div className="space-y-3">
-                            <div className="space-y-2">
-                              <label className="text-sm font-medium">Reason for hold</label>
-                              <Select value={passBackReason} onValueChange={setPassBackReason}>
-                                <SelectTrigger>
-                                  <SelectValue placeholder="Select reason" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="Price too high">Price too high</SelectItem>
-                                  <SelectItem value="Not the right fit">Not the right fit</SelectItem>
-                                  <SelectItem value="Brief misalignment">Brief misalignment</SelectItem>
-                                  <SelectItem value="Try renegotiating">Try renegotiating</SelectItem>
-                                  <SelectItem value="Compliance concern">Compliance concern</SelectItem>
-                                  <SelectItem value="Other">Other</SelectItem>
-                                </SelectContent>
-                              </Select>
-                              {passBackError && (
-                                <div className="text-xs text-red-600">{passBackError}</div>
-                              )}
-                            </div>
-                            <div className="flex gap-2">
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={handleCancelPassBack}
-                                className="flex-1"
-                              >
-                                Cancel
-                              </Button>
-                              <Button
-                                size="sm"
-                                style={{ backgroundColor: "#038B97" }}
-                                onClick={(e) => handleConfirmHold(creator, e)}
-                                className="flex-1"
-                              >
-                                Confirm hold
-                              </Button>
+                    <TableCell onClick={(e) => e.stopPropagation()}>
+                      <div className="relative inline-block">
+                        <button
+                          className="pass-back-popover text-sm px-3 py-1.5 rounded-md border border-border hover:bg-muted transition-colors"
+                          onClick={(e) => handlePassBackClick(creator.id, e)}
+                        >
+                          Hold
+                        </button>
+                        {passBackPopoverId === creator.id && (
+                          <div className="pass-back-popover absolute top-full right-0 mt-1 z-30 bg-white border border-border rounded-lg shadow-lg p-4 w-72">
+                            <div className="space-y-3">
+                              <div className="space-y-2">
+                                <label className="text-sm font-medium">Reason for hold</label>
+                                <Select value={passBackReason} onValueChange={setPassBackReason}>
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Select reason" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="Price too high">Price too high</SelectItem>
+                                    <SelectItem value="Not the right fit">Not the right fit</SelectItem>
+                                    <SelectItem value="Brief misalignment">Brief misalignment</SelectItem>
+                                    <SelectItem value="Try renegotiating">Try renegotiating</SelectItem>
+                                    <SelectItem value="Compliance concern">Compliance concern</SelectItem>
+                                    <SelectItem value="Other">Other</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                                {passBackError && (
+                                  <div className="text-xs text-red-600">{passBackError}</div>
+                                )}
+                              </div>
+                              <div className="flex gap-2">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={handleCancelPassBack}
+                                  className="flex-1"
+                                >
+                                  Cancel
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  style={{ backgroundColor: "#038B97" }}
+                                  onClick={(e) => handleConfirmHold(creator, e)}
+                                  className="flex-1"
+                                >
+                                  Confirm hold
+                                </Button>
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      )}
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell onClick={(e) => e.stopPropagation()}>
                       <Button
