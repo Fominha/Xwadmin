@@ -116,12 +116,12 @@ export function Orders() {
 
     if (data) {
       const mapped: ClientSelection[] = data.map((row: any) => ({
-        creator: row.name ?? row.creators?.name ?? "",
-        level: row.production_tier ?? row.creators?.production_tier ?? 0,
-        finalBid: row.execution_price ?? 0,
+        creator: row.creators?.name ?? "",
+        level: row.creators?.production_tier ?? 0,
+        finalBid: row.creators?.bid ?? 0,
         sentDate: row.pushed_at ?? "",
-        clientStatus: row.decision ?? "Pending view",
-        lastStatusChange: row.updated_at ?? row.pushed_at,
+        clientStatus: row.client_status ?? "Pending view",
+        lastStatusChange: row.last_status_change ?? row.pushed_at,
       }));
       setClientSelections(mapped);
 
